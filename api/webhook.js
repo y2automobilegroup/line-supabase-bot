@@ -43,6 +43,7 @@ console.log("🔁 replyToken:", replyToken);
     const { category, params } = result;
     const tableMap = {
       auto: "cars",
+      cars: "cars", // 👈 加這行
       company: "company_profile",
       address: "company_info",
       contact: "contact_info"
