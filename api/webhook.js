@@ -31,8 +31,22 @@ export default async function handler(req, res) {
       messages: [
         {
           role: "system",
-         content: "你是分類助手，請根據使用者詢問的內容，輸出 JSON 格式 { category, params }。category 僅能為以下四種之一：cars、company、address、contact。請不要輸出其他類別名稱。你是亞鈺汽車的50年資深客服專員，擅長解決問題且擅長思考拆解問題，請先透過參考資料判斷並解析問題點，只詢問參考資料需要的問題，不要問不相關參考資料的問題，如果詢問內容不在參考資料內，請先判斷這句話是什麼類型的問題，然後針對參考資料內的資料做反問問題，最後問到需要的答案，請用最積極與充滿溫度的方式回答，若參考資料與問題無關，比如他是來聊天的，請回覆罐頭訊息：\"感謝您的詢問，請詢問亞鈺汽車相關問題，我們很高興為您服務！😄\"。整體回覆請縮減，不要超過100個字。"
+          content: `
+你是分類助手，請根據使用者詢問的內容，輸出 JSON 格式 { category, params }。
+category 僅能為以下四種之一：cars、company、address、contact。
+請不要輸出其他類別名稱。
 
+你是亞鈺汽車的50年資深客服專員，擅長解決問題且擅長思考拆解問題。
+請先透過參考資料判斷並解析問題點，只詢問參考資料需要的問題，不要問不相關參考資料的問題。
+如果詢問內容不在參考資料內，請先判斷這句話是什麼類型的問題，
+然後針對參考資料內的資料做反問問題，最後問到需要的答案。
+請用最積極與充滿溫度的方式回答。
+
+若參考資料與問題無關，比如他是來聊天的，請回覆罐頭訊息：
+"感謝您的詢問，請詢問亞鈺汽車相關問題，我們很高興為您服務！😄"
+
+整體回覆請縮減，不要超過100個字。
+`.trim()
         },
         { role: "user", content: userText }
       ]
@@ -49,18 +63,19 @@ export default async function handler(req, res) {
       return res.status(200).send("GPT JSON parse error");
     }
 
-  const { category, params } = result;
-const normalizedCategory = category.toLowerCase(); // ✅ 不要移除 s
+    const { category, params } = result;
+    const normalizedCategory = category.toLowerCase();
 
-const tableMap = {
-  cars: "cars",
-  company: "company_profile",
-  address: "company_info",
-  contact: "contact_info"
-};
+    const tableMap = {
+      cars: "cars",
+      company: "company_profile",
+      address: "company_info",
+      contact: "contact_info"
+    };
 
-const table = tableMap[normalizedCategory];
-console.log("📦 分類結果：", category, "| 對應資料表：", table);
+    const table = tableMap[normalizedCategory];
+    console.log("📦 分類結果：", category, "| 對應資料表：", table);
+
     let replyText = "";
 
     if (!table) {
@@ -68,7 +83,7 @@ console.log("📦 分類結果：", category, "| 對應資料表：", table);
       console.log("⚠️ category 無對應資料表，進入 fallback");
     } else {
       const query = Object.entries(params)
-        .map(([key, value]) => `${key}=ilike.${encodeURIComponent(value)}`) // 改用 ilike 不分大小寫
+        .map(([key, value]) => `${key}=ilike.${encodeURIComponent(value)}`)
         .join("&");
 
       const url = `${process.env.SUPABASE_URL}/rest/v1/${table}?select=*&${query}`;
@@ -85,7 +100,7 @@ console.log("📦 分類結果：", category, "| 對應資料表：", table);
       console.log("🔍 Supabase 回傳資料：", data);
 
       if (Array.isArray(data) && data.length > 0) {
-        if (normalizedCategory === "car") {
+        if (normalizedCategory === "cars") {
           replyText = `目前共有 ${data.length} 輛符合條件的車輛，例如：${data[0].brand} ${data[0].車型 || "車款"}，${data[0].年份 || ""} 年`;
         } else if (normalizedCategory === "address") {
           replyText = `我們的地址是：${data[0].地址}`;
