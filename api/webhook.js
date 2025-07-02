@@ -1,10 +1,9 @@
-import { Configuration, OpenAIApi } from "openai";
+import OpenAI from "openai";
 import fetch from "node-fetch";
 
-const config = new Configuration({
+const openai = new OpenAI({
   apiKey: process.env.OPENAI_KEY
 });
-const openai = new OpenAIApi(config);
 
 export default async function handler(req, res) {
   if (req.method !== "POST") return res.status(405).end("Only POST allowed");
@@ -13,15 +12,15 @@ export default async function handler(req, res) {
   const userText = body.events?.[0]?.message?.text;
   const replyToken = body.events?.[0]?.replyToken;
 
-  const gpt = await openai.createChatCompletion({
-    model: "gpt-4",
+  const gpt = await openai.chat.completions.create({
+    model: "gpt-4o",
     messages: [
       { role: "system", content: "你是分類助手，請輸出 JSON 格式 { category, params }。" },
       { role: "user", content: userText }
     ]
   });
 
-  const result = JSON.parse(gpt.data.choices[0].message.content);
+  const result = JSON.parse(gpt.choices[0].message.content);
   const { category, params } = result;
 
   const tableMap = {
