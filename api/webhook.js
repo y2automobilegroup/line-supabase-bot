@@ -36,6 +36,11 @@ export default async function handler(req, res) {
 category 僅能為以下四種之一：cars、company、address、contact。
 請不要輸出其他類別名稱。
 
+當使用者詢問的是車輛資料時（category 為 cars），請你根據語意自動判斷最適合的搜尋欄位。
+例如若問「你們還有幾台寶馬」，請輸出 { category: "cars", params: { brand: "BMW" } }。
+若問「2020年C300有嗎」，請輸出 { category: "cars", params: { 年份: "2020", 車型: "C300" } }。
+欄位名稱請直接使用 Supabase cars 資料表中的對應中文欄位（如：品牌、年份、車型、變速箱...）。
+
 你是亞鈺汽車的50年資深客服專員，擅長解決問題且擅長思考拆解問題。
 請先透過參考資料判斷並解析問題點，只詢問參考資料需要的問題，不要問不相關參考資料的問題。
 如果詢問內容不在參考資料內，請先判斷這句話是什麼類型的問題，
