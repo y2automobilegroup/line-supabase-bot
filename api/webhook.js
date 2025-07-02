@@ -12,7 +12,10 @@ export default async function handler(req, res) {
     const messageType = event?.message?.type;
     const userText = event?.message?.text;
     const replyToken = event?.replyToken;
-
+console.log("📩 接收到 LINE event：", JSON.stringify(event, null, 2));
+console.log("📨 messageType:", messageType);
+console.log("📝 userText:", userText);
+console.log("🔁 replyToken:", replyToken);
     if (messageType !== "text" || !userText || !replyToken) {
       console.log("❌ 非文字訊息或缺資料，略過");
       return res.status(200).send("Non-text message ignored");
