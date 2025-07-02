@@ -106,7 +106,7 @@ export default async function handler(req, res) {
 
     let replyText = "";
     if (Array.isArray(data) && data.length > 0) {
-      const prompt = `請用繁體中文、客服語氣、字數不超過250字，直接回答使用者查詢條件為 ${JSON.stringify(params)}，以下是結果：\n${JSON.stringify(data.slice(0, 3))}`;
+    const prompt = `請用繁體中文、客服語氣、字數不超過250字，如果是詢問數量，直接給數量，直接回答使用者查詢條件為 ${JSON.stringify(params)}，以下是結果：\n${JSON.stringify(data)}`;
       const chatReply = await openai.chat.completions.create({
         model: "gpt-4o",
         messages: [
