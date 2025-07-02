@@ -37,7 +37,7 @@ category 僅能為以下四種之一：cars、company、address、contact。
 請不要輸出其他類別名稱。
 
 當使用者詢問的是車輛資料時（category 為 cars），請你根據語意自動判斷最適合的搜尋欄位。
-例如若問「你們還有幾台寶馬」，請輸出 { category: "cars", params: { brand: "BMW" } }。
+例如若問「你們還有幾台寶馬」，請輸出 { category: "cars", params: { 品牌: "BMW" } }。
 若問「2020年C300有嗎」，請輸出 { category: "cars", params: { 年份: "2020", 車型: "C300" } }。
 欄位名稱請直接使用 Supabase cars 資料表中的對應中文欄位（如：品牌、年份、車型、變速箱...）。
 
@@ -51,6 +51,7 @@ category 僅能為以下四種之一：cars、company、address、contact。
 "感謝您的詢問，請詢問亞鈺汽車相關問題，我們很高興為您服務！😄"
 
 整體回覆請縮減，不要超過100個字。
+⚠️ 所有回覆請使用**合法 JSON 字串格式**，例如："{"category":"cars","params":{"品牌":"Toyota"}}"
 `.trim()
         },
         { role: "user", content: userText }
