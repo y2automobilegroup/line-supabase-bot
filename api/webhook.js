@@ -57,7 +57,6 @@ export default async function handler(req, res) {
     let replyContent = gpt.choices[0].message.content;
     console.log("🧠 GPT 回傳內容：", replyContent);
 
-    // ⛔ 移除 ```json 包裝（若有）
     replyContent = replyContent.trim().replace(/^```json\n?|\n?```$/g, "");
 
     let result;
@@ -74,8 +73,8 @@ export default async function handler(req, res) {
     const currentBrand = params?.廠牌;
     const lastBrand = topicMemory[userId]?.廠牌;
     if (currentBrand && lastBrand && currentBrand !== lastBrand) {
-      memory[userId] = []; // 清除上下文
-      topicMemory[userId] = {}; // 清除主題記憶
+      memory[userId] = [];
+      topicMemory[userId] = {};
       console.log("🔁 品牌改變，清除上下文記憶");
     }
 
@@ -131,15 +130,21 @@ export default async function handler(req, res) {
       console.log("🔍 Supabase 回傳資料：", data);
 
       if (Array.isArray(data) && data.length > 0) {
-        if (normalizedCategory === "cars") {
-          const car = data[0];
-          replyText = `目前共有 ${data.length} 台車符合條件，例如：${car.廠牌} ${car.車型 || "車款"}（${car.年份 || "年份未知"}年）`;
-          if (followup) replyText += `\n\n${followup}`;
-        } else if (normalizedCategory === "address") {
-          replyText = `我們的地址是：${data[0].地址}`;
-        } else {
-          replyText = JSON.stringify(data[0], null, 2);
-        }
+        const prompt = `以下是使用者查詢條件為 ${JSON.stringify(params)}，查詢結果如下：\n\n${JSON.stringify(data.slice(0, 3), null, 2)}\n\n請根據上述內容以自然語氣、貼近客服風格，幫我用繁體中文回覆使用者。若有 followup 提示內容：「${followup || ""}」，請自然銜接。`;
+
+        const chatReply = await openai.chat.completions.create({
+          model: "gpt-4o",
+          messages: [
+            { role: "system", content: "你是亞鈺汽車的50年資深客服專員，擅長解決問題且擅長思考拆解問題，"
+                        "請先透過參考資料判斷並解析問題點，只詢問參考資料需要的問題，"
+                        "不要問不相關參考資料的問題，如果詢問內容不在參考資料內，請先判斷這句話是什麼類型的問題，"
+                        "然後針對參考資料內的資料做反問問題，最後問到需要的答案，請用最積極與充滿溫度的方式回答，"
+                        "若參考資料與問題無關，比如他是來聊天的，請回覆罐頭訊息：\"感謝您的詢問，請詢問亞鈺汽車相關問題，我們很高興為您服務！😄" },
+            { role: "user", content: prompt }
+          ]
+        });
+
+        replyText = chatReply.choices[0].message.content.trim();
       } else {
         replyText = "抱歉，目前查無相關資料。";
       }
