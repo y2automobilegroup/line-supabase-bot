@@ -44,6 +44,9 @@ export default async function handler(req, res) {
     }
 
     const { category, params, followup } = result;
+if (category === "cars" && (!params || Object.keys(params).length === 0)) {
+  Object.assign(params, topicMemory[userId] || {});
+}
     const currentBrand = params?.廠牌;
     const lastBrand = topicMemory[userId]?.廠牌;
     if (currentBrand && lastBrand && currentBrand !== lastBrand) {
