@@ -36,22 +36,23 @@ export default async function handler(req, res) {
 
 其中：
 - category 僅能為：cars、company、address、contact 四選一。
-- params 依照語意自動比對下列欄位：廠牌、車款、車型、年式、年份、變速系統、車門數、驅動方式、引擎燃料、乘客數、排氣量、顏色、首次領牌時間、行駛里程、車身號碼、車輛售價、賣家保證、聯絡人、賞車地址、檢測機構、認證書。
-  - 若使用者問題模糊，請將你要反問的內容填入 followup 欄位，例如："您是想找特定品牌、年份，還是有預算考量呢？"
+- params 可包含以下欄位（都為中文）：廠牌、車款、車型、年式、年份、變速系統、車門數、驅動方式、引擎燃料、乘客數、排氣量、顏色、首次領牌時間、行駛里程、車身號碼、車輛售價、賣家保證、聯絡人、賞車地址、檢測機構、認證書。
+- 若使用者問題模糊，請將你要反問的內容填入 followup 欄位。
 - 若只是聊天或與亞鈺汽車無關，請回傳：
-  { "category": "other", "params": {}, "followup": "感謝您的詢問，請詢問亞鈺汽車相關問題，我們很高興為您服務！😄" }
+{ "category": "other", "params": {}, "followup": "感謝您的詢問，請詢問亞鈺汽車相關問題，我們很高興為您服務！😄" }
 
-請注意：只允許回傳符合上述結構的 JSON 字串，不要加多餘文字。`
+請注意：**只允許回傳上述結構的純 JSON，不要加 \`\`\` 或多餘文字。`
         },
         { role: "user", content: userText }
       ]
     });
 
-    console.log("🧠 GPT 回傳內容：", gpt.choices[0].message.content);
+    const gptText = gpt.choices[0]?.message?.content?.trim();
+    console.log("🧠 GPT 回傳內容：", gptText);
 
     let result;
     try {
-      result = JSON.parse(gpt.choices[0].message.content);
+      result = JSON.parse(gptText);
     } catch (e) {
       console.log("❌ GPT 回傳格式錯誤，無法解析 JSON：", e.message);
       await replyToLine(replyToken, "不好意思，我目前無法理解您的問題，我們會請專人聯繫您！");
@@ -59,6 +60,7 @@ export default async function handler(req, res) {
     }
 
     const { category, params, followup } = result;
+
     if (category === "other") {
       const replyText = followup || "感謝您的詢問，請詢問亞鈺汽車相關問題，我們很高興為您服務！😄";
       await replyToLine(replyToken, replyText);
@@ -66,7 +68,6 @@ export default async function handler(req, res) {
     }
 
     const normalizedCategory = category.toLowerCase();
-
     const tableMap = {
       cars: "cars",
       company: "company_profile",
@@ -76,11 +77,11 @@ export default async function handler(req, res) {
 
     const table = tableMap[normalizedCategory];
     console.log("📦 分類結果：", category, "| 對應資料表：", table);
+
     let replyText = "";
 
     if (!table) {
       replyText = "亞鈺客服您好，我們會請專人儘快回覆您！😊";
-      console.log("⚠️ category 無對應資料表，進入 fallback");
     } else {
       const query = Object.entries(params || {})
         .map(([key, value]) => `${encodeURIComponent(key)}=ilike.${encodeURIComponent(value)}`)
@@ -102,7 +103,7 @@ export default async function handler(req, res) {
       if (Array.isArray(data) && data.length > 0) {
         if (normalizedCategory === "cars") {
           const car = data[0];
-          replyText = `目前共有 ${data.length} 台車符合條件，例如：${car.廠牌} ${car.車型 || "車款"}（${car.年份 || "年份未知"}年）`;
+          replyText = `目前共有 ${data.length} 台車符合條件，例如：${car.廠牌} ${car.車型 || car.車款 || "車款"}（${car.年份 || car.年式 || "年份未知"}年）`;
           if (followup) replyText += `\n\n${followup}`;
         } else if (normalizedCategory === "address") {
           replyText = `我們的地址是：${data[0].地址}`;
