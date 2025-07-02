@@ -57,7 +57,8 @@ export default async function handler(req, res) {
 
     let result;
     try {
-      result = JSON.parse(replyContent);
+      const cleaned = replyContent.replace(/```json|```/g, "").trim();
+      result = JSON.parse(cleaned);
     } catch (e) {
       console.log("❌ GPT 回傳格式錯誤，無法解析 JSON：", e.message);
       await replyToLine(replyToken, "不好意思，我目前無法理解您的問題，我們會請專人聯繫您！");
