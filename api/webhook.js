@@ -2,6 +2,7 @@ import OpenAI from "openai";
 import fetch from "node-fetch";
 
 const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
+const memory = {}; // ✅ 對話記憶物件
 
 export default async function handler(req, res) {
   try {
@@ -15,10 +16,12 @@ export default async function handler(req, res) {
     const messageType = event?.message?.type;
     const userText = event?.message?.text;
     const replyToken = event?.replyToken;
+    const userId = event?.source?.userId;
 
     console.log("📩 接收到 LINE event：", event);
     console.log("📨 messageType:", messageType);
     console.log("📝 userText:", userText);
+    console.log("👤 userId:", userId);
     console.log("🔁 replyToken:", replyToken);
 
     if (messageType !== "text" || !userText || !replyToken) {
@@ -26,6 +29,7 @@ export default async function handler(req, res) {
       return res.status(200).send("Non-text message ignored");
     }
 
+    const contextMessages = memory[userId]?.map(text => ({ role: "user", content: text })) || [];
     const gpt = await openai.chat.completions.create({
       model: "gpt-4o",
       messages: [
@@ -36,23 +40,24 @@ export default async function handler(req, res) {
 
 其中：
 - category 僅能為：cars、company、address、contact 四選一。
-- params 可包含以下欄位（都為中文）：廠牌、車款、車型、年式、年份、變速系統、車門數、驅動方式、引擎燃料、乘客數、排氣量、顏色、首次領牌時間、行駛里程、車身號碼、車輛售價、賣家保證、聯絡人、賞車地址、檢測機構、認證書。
-- 若使用者問題模糊，請將你要反問的內容填入 followup 欄位。
+- params 依照語意自動比對下列欄位：廠牌、車款、車型、年式、年份、變速系統、車門數、驅動方式、引擎燃料、乘客數、排氣量、顏色、首次領牌時間、行駛里程、車身號碼、車輛售價、賣家保證、聯絡人、賞車地址、檢測機構、認證書。
+  - 若使用者問題模糊，請將你要反問的內容填入 followup 欄位，例如："您是想找特定品牌、年份，還是有預算考量呢？"
 - 若只是聊天或與亞鈺汽車無關，請回傳：
-{ "category": "other", "params": {}, "followup": "感謝您的詢問，請詢問亞鈺汽車相關問題，我們很高興為您服務！😄" }
+  { "category": "other", "params": {}, "followup": "感謝您的詢問，請詢問亞鈺汽車相關問題，我們很高興為您服務！😄" }
 
-請注意：**只允許回傳上述結構的純 JSON，不要加 \`\`\` 或多餘文字。`
+請注意：只允許回傳符合上述結構的 JSON 字串，不要加多餘文字。`
         },
+        ...contextMessages,
         { role: "user", content: userText }
       ]
     });
 
-    const gptText = gpt.choices[0]?.message?.content?.trim();
-    console.log("🧠 GPT 回傳內容：", gptText);
+    const replyContent = gpt.choices[0].message.content;
+    console.log("🧠 GPT 回傳內容：", replyContent);
 
     let result;
     try {
-      result = JSON.parse(gptText);
+      result = JSON.parse(replyContent);
     } catch (e) {
       console.log("❌ GPT 回傳格式錯誤，無法解析 JSON：", e.message);
       await replyToLine(replyToken, "不好意思，我目前無法理解您的問題，我們會請專人聯繫您！");
@@ -60,6 +65,12 @@ export default async function handler(req, res) {
     }
 
     const { category, params, followup } = result;
+
+    // ✅ 記憶儲存
+    memory[userId] = [...(memory[userId] || []), userText];
+    if (Object.keys(params || {}).length > 0) {
+      memory[userId].push(JSON.stringify(params));
+    }
 
     if (category === "other") {
       const replyText = followup || "感謝您的詢問，請詢問亞鈺汽車相關問題，我們很高興為您服務！😄";
@@ -77,7 +88,6 @@ export default async function handler(req, res) {
 
     const table = tableMap[normalizedCategory];
     console.log("📦 分類結果：", category, "| 對應資料表：", table);
-
     let replyText = "";
 
     if (!table) {
@@ -103,7 +113,7 @@ export default async function handler(req, res) {
       if (Array.isArray(data) && data.length > 0) {
         if (normalizedCategory === "cars") {
           const car = data[0];
-          replyText = `目前共有 ${data.length} 台車符合條件，例如：${car.廠牌} ${car.車型 || car.車款 || "車款"}（${car.年份 || car.年式 || "年份未知"}年）`;
+          replyText = `目前共有 ${data.length} 台車符合條件，例如：${car.廠牌} ${car.車型 || "車款"}（${car.年份 || "年份未知"}年）`;
           if (followup) replyText += `\n\n${followup}`;
         } else if (normalizedCategory === "address") {
           replyText = `我們的地址是：${data[0].地址}`;
