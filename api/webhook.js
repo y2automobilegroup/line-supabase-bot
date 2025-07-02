@@ -39,7 +39,7 @@ export default async function handler(req, res) {
 
     const { category, params } = result;
     const tableMap = {
-      car: "cars",
+      auto: "cars",
       company: "company_profile",
       address: "company_info",
       contact: "contact_info"
