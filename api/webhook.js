@@ -26,7 +26,7 @@ export default async function handler(req, res) {
           content: `你是分類助手，請根據使用者詢問的內容，永遠只輸出 JSON 格式：
 { "category": "...", "params": { ... }, "followup": "..." }
 - category 僅能為：cars、company、address、contact 四選一。
-- params 依照語意比對以下欄位，如：物件編號、廠牌、車款、車型、年式、年份、變速系統、車門數、驅動方式、引擎燃料、乘客數、排氣量、顏色、安全性配備、舒適性配備、首次領牌時間、行駛里程、車身號碼、引擎號碼、外匯車資料、車輛售價、車輛賣點、車輛副標題、賣家保證、特色說明、影片看車、物件圖片、聯絡人、行動電話、賞車地址、line、檢測機構、查定編號、認證書
+- params 依照語意比對以下欄位，如：物件編號、廠牌、車款、車型、年式、年份、變速系統、車門數、驅動方式、引擎燃料、乘客數、排氣量、顏色、安全性配備、舒適性配備、首次領牌時間、行駛里程、車身號碼、引擎號碼、外匯車資料、車輛售價、車輛賣點、車輛副標題、賣家保證、特色說明、影片看車、物件圖片、聯絡人、行動電話、賞車地址、line、檢測機構、查定編號、認證書。
 - 數值請用 gte / lte / eq，例如：{"年份": {"gte": 2020}}
 - 無關問題請回傳：{"category":"other","params":{},"followup":"請詢問亞鈺汽車相關問題，謝謝！"}`
         },
@@ -45,19 +45,15 @@ export default async function handler(req, res) {
 
     const { category, params, followup } = result;
     const currentBrand = params?.廠牌;
-    const lastBrand = topicMemory[userId]?.廠牌;
-    const currentModel = params?.車型;
-    const lastModel = topicMemory[userId]?.車型;
-    if ((currentBrand && lastBrand && currentBrand !== lastBrand) ||
-        (currentModel && lastModel && currentModel !== lastModel)) {
-      memory[userId] = [];
-      topicMemory[userId] = {};
-    }
+    const lastParams = topicMemory[userId] || {};
+    const lastBrand = lastParams.廠牌;
 
-    memory[userId] = [...(memory[userId] || []), userText];
-    if (Object.keys(params || {}).length > 0) {
-      memory[userId].push(JSON.stringify(params));
-      topicMemory[userId] = { ...topicMemory[userId], ...params };
+    if (currentBrand && currentBrand !== lastBrand) {
+      memory[userId] = [userText];
+      topicMemory[userId] = { ...params };
+    } else {
+      memory[userId] = [...(memory[userId] || []), userText];
+      topicMemory[userId] = { ...lastParams, ...params };
     }
 
     if (category === "other") {
@@ -75,20 +71,6 @@ export default async function handler(req, res) {
     if (!table) {
       await replyToLine(replyToken, "我們會請專人儘快回覆您！");
       return res.status(200).send("Unknown category");
-    }
-
-    // ✅ 若沒有查詢條件但有記憶，則針對記憶回答
-    if ((!params || Object.keys(params).length === 0) && topicMemory[userId]?.查詢資料) {
-      const prompt = `使用者提問：「${userText}」\n先前他查詢的是這些資料：${JSON.stringify(topicMemory[userId].查詢資料)}\n請根據他的提問與先前資料，回答他想知道的內容。回覆不要超過250字。`;
-      const chatReply = await openai.chat.completions.create({
-        model: "gpt-4o",
-        messages: [
-          { role: "user", content: prompt }
-        ]
-      });
-      const replyText = chatReply.choices[0].message.content.trim();
-      await replyToLine(replyToken, replyText);
-      return res.status(200).send("回答舊查詢問題");
     }
 
     const query = Object.entries(params || {})
@@ -123,12 +105,6 @@ export default async function handler(req, res) {
 
     let replyText = "";
     if (Array.isArray(data) && data.length > 0) {
-      // ✅ 存入查詢資料以供後續提問關聯
-      topicMemory[userId] = {
-        ...topicMemory[userId],
-        查詢資料: data
-      };
-
       const prompt = `請用繁體中文、客服語氣、字數不超過250字，如果是詢問數量，直接給數量，直接回答使用者查詢條件為 ${JSON.stringify(params)}，以下是結果：\n${JSON.stringify(data)}`;
       const chatReply = await openai.chat.completions.create({
         model: "gpt-4o",
