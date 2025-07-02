@@ -44,12 +44,12 @@ export default async function handler(req, res) {
     }
 
     const { category, params, followup } = result;
-if (category === "cars" && (!params || Object.keys(params).length === 0)) {
-  Object.assign(params, topicMemory[userId] || {});
-}
     const currentBrand = params?.廠牌;
     const lastBrand = topicMemory[userId]?.廠牌;
-    if (currentBrand && lastBrand && currentBrand !== lastBrand) {
+    const currentModel = params?.車型;
+    const lastModel = topicMemory[userId]?.車型;
+    if ((currentBrand && lastBrand && currentBrand !== lastBrand) ||
+        (currentModel && lastModel && currentModel !== lastModel)) {
       memory[userId] = [];
       topicMemory[userId] = {};
     }
@@ -75,6 +75,20 @@ if (category === "cars" && (!params || Object.keys(params).length === 0)) {
     if (!table) {
       await replyToLine(replyToken, "我們會請專人儘快回覆您！");
       return res.status(200).send("Unknown category");
+    }
+
+    // ✅ 若沒有查詢條件但有記憶，則針對記憶回答
+    if ((!params || Object.keys(params).length === 0) && topicMemory[userId]?.查詢資料) {
+      const prompt = `使用者提問：「${userText}」\n先前他查詢的是這些資料：${JSON.stringify(topicMemory[userId].查詢資料)}\n請根據他的提問與先前資料，回答他想知道的內容。回覆不要超過250字。`;
+      const chatReply = await openai.chat.completions.create({
+        model: "gpt-4o",
+        messages: [
+          { role: "user", content: prompt }
+        ]
+      });
+      const replyText = chatReply.choices[0].message.content.trim();
+      await replyToLine(replyToken, replyText);
+      return res.status(200).send("回答舊查詢問題");
     }
 
     const query = Object.entries(params || {})
@@ -109,10 +123,13 @@ if (category === "cars" && (!params || Object.keys(params).length === 0)) {
 
     let replyText = "";
     if (Array.isArray(data) && data.length > 0) {
-  const prompt = `以下是使用者的提問：「${userText}」
-你可以參考以下資料：\n${JSON.stringify(data)}
+      // ✅ 存入查詢資料以供後續提問關聯
+      topicMemory[userId] = {
+        ...topicMemory[userId],
+        查詢資料: data
+      };
 
-請直接根據提問與資料，給出一段不超過250字的回答。`;
+      const prompt = `請用繁體中文、客服語氣、字數不超過250字，如果是詢問數量，直接給數量，直接回答使用者查詢條件為 ${JSON.stringify(params)}，以下是結果：\n${JSON.stringify(data)}`;
       const chatReply = await openai.chat.completions.create({
         model: "gpt-4o",
         messages: [
