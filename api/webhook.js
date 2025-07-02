@@ -3,6 +3,7 @@ import fetch from "node-fetch";
 
 const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
 const memory = {}; // ✅ 對話記憶物件
+const topicMemory = {}; // ✅ 主題記憶（用來判斷品牌、年份是否變更）
 
 export default async function handler(req, res) {
   try {
@@ -29,13 +30,6 @@ export default async function handler(req, res) {
       return res.status(200).send("Non-text message ignored");
     }
 
-    // ✅ 加入記憶清除機制
-    if (["重來", "清除條件", "清除記憶"].includes(userText.trim())) {
-      delete memory[userId];
-      await replyToLine(replyToken, "已為您清除條件，請重新輸入需求 😊");
-      return res.status(200).send("Cleared memory");
-    }
-
     const contextMessages = memory[userId]?.map(text => ({ role: "user", content: text })) || [];
     const gpt = await openai.chat.completions.create({
       model: "gpt-4o",
@@ -59,12 +53,11 @@ export default async function handler(req, res) {
       ]
     });
 
-    let replyContent = gpt.choices[0].message.content.trim();
-    if (replyContent.startsWith("```json")) {
-      replyContent = replyContent.replace(/```json|```/g, "").trim();
-    }
-
+    let replyContent = gpt.choices[0].message.content;
     console.log("🧠 GPT 回傳內容：", replyContent);
+
+    // ⛔ 移除 ```json 包裝（若有）
+    replyContent = replyContent.trim().replace(/^```json\n?|\n?```$/g, "");
 
     let result;
     try {
@@ -77,10 +70,20 @@ export default async function handler(req, res) {
 
     const { category, params, followup } = result;
 
+    // ✅ 主題追蹤：判斷是否更換主題（如品牌變更則清除記憶）
+    const currentBrand = params?.廠牌;
+    const lastBrand = topicMemory[userId]?.廠牌;
+    if (currentBrand && lastBrand && currentBrand !== lastBrand) {
+      memory[userId] = []; // 清除上下文
+      topicMemory[userId] = {}; // 清除主題記憶
+      console.log("🔁 品牌改變，清除上下文記憶");
+    }
+
     // ✅ 記憶儲存
     memory[userId] = [...(memory[userId] || []), userText];
     if (Object.keys(params || {}).length > 0) {
       memory[userId].push(JSON.stringify(params));
+      topicMemory[userId] = { ...topicMemory[userId], ...params };
     }
 
     if (category === "other") {
