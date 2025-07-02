@@ -50,8 +50,7 @@ export default async function handler(req, res) {
     }
 
     const { category, params } = result;
-    const normalizedCategory = category.toLowerCase().replace(/s$/, ""); // car/cars → car
-
+    const normalizedCategory = category.toLowerCase().replace(/s$/, ""); // cars -> car
     const tableMap = {
       car: "cars",
       company: "company_profile",
@@ -61,7 +60,6 @@ export default async function handler(req, res) {
 
     const table = tableMap[normalizedCategory];
     console.log("📦 分類結果：", category, "| 對應資料表：", table);
-
     let replyText = "";
 
     if (!table) {
@@ -69,21 +67,37 @@ export default async function handler(req, res) {
       console.log("⚠️ category 無對應資料表，進入 fallback");
     } else {
       const query = Object.entries(params)
-        .map(([key, value]) => `${key}=ilike.%${value}%`) // 模糊搜尋，大小寫不敏感
+        .map(([key, value]) => `${key}=eq.${encodeURIComponent(value)}`)
         .join("&");
 
       const url = `${process.env.SUPABASE_URL}/rest/v1/${table}?select=*&${query}`;
-      console.log("🔗 查詢 Supabase URL：", url);
+      console.log("🌐 查詢 URL：", url);
 
-      const resp = await fetch(url, {
-        headers: {
-          apikey: process.env.SUPABASE_KEY,
-          Authorization: `Bearer ${process.env.SUPABASE_KEY}`
+      let data;
+      try {
+        const resp = await fetch(url, {
+          headers: {
+            apikey: process.env.SUPABASE_KEY,
+            Authorization: `Bearer ${process.env.SUPABASE_KEY}`
+          }
+        });
+
+        const contentType = resp.headers.get("content-type");
+        if (!resp.ok) {
+          const errorText = await resp.text();
+          throw new Error(`HTTP ${resp.status}：${errorText}`);
+        } else if (!contentType?.includes("application/json")) {
+          const errorText = await resp.text();
+          throw new Error(`非 JSON 回應：${errorText.slice(0, 200)}`);
         }
-      });
 
-      const data = await resp.json();
-      console.log("🔍 Supabase 回傳資料：", data);
+        data = await resp.json();
+        console.log("🔍 Supabase 回傳資料：", data);
+      } catch (fetchErr) {
+        console.error("❌ Supabase fetch 錯誤：", fetchErr.message);
+        await replyToLine(replyToken, "資料查詢時發生錯誤，我們會請專人協助您！");
+        return res.status(200).send("fetch error");
+      }
 
       if (Array.isArray(data) && data.length > 0) {
         if (normalizedCategory === "car") {
