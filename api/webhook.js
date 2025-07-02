@@ -29,6 +29,13 @@ export default async function handler(req, res) {
       return res.status(200).send("Non-text message ignored");
     }
 
+    // ✅ 加入記憶清除機制
+    if (["重來", "清除條件", "清除記憶"].includes(userText.trim())) {
+      delete memory[userId];
+      await replyToLine(replyToken, "已為您清除條件，請重新輸入需求 😊");
+      return res.status(200).send("Cleared memory");
+    }
+
     const contextMessages = memory[userId]?.map(text => ({ role: "user", content: text })) || [];
     const gpt = await openai.chat.completions.create({
       model: "gpt-4o",
@@ -52,13 +59,16 @@ export default async function handler(req, res) {
       ]
     });
 
-    const replyContent = gpt.choices[0].message.content;
+    let replyContent = gpt.choices[0].message.content.trim();
+    if (replyContent.startsWith("```json")) {
+      replyContent = replyContent.replace(/```json|```/g, "").trim();
+    }
+
     console.log("🧠 GPT 回傳內容：", replyContent);
 
     let result;
     try {
-      const cleaned = replyContent.replace(/```json|```/g, "").trim();
-      result = JSON.parse(cleaned);
+      result = JSON.parse(replyContent);
     } catch (e) {
       console.log("❌ GPT 回傳格式錯誤，無法解析 JSON：", e.message);
       await replyToLine(replyToken, "不好意思，我目前無法理解您的問題，我們會請專人聯繫您！");
