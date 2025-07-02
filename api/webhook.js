@@ -44,9 +44,10 @@ export default async function handler(req, res) {
     }
 
     const { category, params, followup } = result;
-    const currentBrand = params?.廠牌;
-    const lastBrand = topicMemory[userId]?.廠牌;
-    if (currentBrand && lastBrand && currentBrand !== lastBrand) {
+    const changed = Object.keys(params || {}).some(key => {
+      return topicMemory[userId]?.[key] && topicMemory[userId][key] !== params[key];
+    });
+    if (changed) {
       memory[userId] = [];
       topicMemory[userId] = {};
     }
@@ -81,7 +82,7 @@ export default async function handler(req, res) {
           if (value.lte !== undefined) return `${key}=lte.${value.lte}`;
           if (value.eq !== undefined) return `${key}=eq.${value.eq}`;
         }
-        return `${key}=ilike.${value}`;
+        return `${key}=ilike.%${value.toString().toLowerCase()}%`;
       })
       .join("&");
 
@@ -97,13 +98,17 @@ export default async function handler(req, res) {
 
     let replyText = "";
     if (Array.isArray(data) && data.length > 0) {
-      const prompt = `請用繁體中文、客服語氣、字數不超過250字，直接回答使用者查詢條件為 ${JSON.stringify(params)}，以下是結果：\n${JSON.stringify(data.slice(0, 3))}`;
+      const summary = `符合條件的共有 ${data.length} 台車，這是其中幾台代表：${JSON.stringify(data.slice(0, 3))}`;
+      const prompt = `請用繁體中文、客服語氣、字數不超過250字，直接回答使用者查詢條件為 ${JSON.stringify(params)}，以下是結果：\n${summary}`;
       const chatReply = await openai.chat.completions.create({
         model: "gpt-4o",
-          messages: [
-            { role: "system", content: "你是亞鈺汽車的50年資深客服專員，擅長解決問題且擅長思考拆解問題，請先透過參考資料判斷並解析問題點，只詢問參考資料需要的問題，不要問不相關參考資料的問題，如果詢問內容不在參考資料內，請先判斷這句話是什麼類型的問題，然後針對參考資料內的資料做反問問題，最後問到需要的答案，請用最積極與充滿溫度的方式回答，若參考資料與問題無關，比如他是來聊天的，請回覆罐頭訊息：\"感謝您的詢問，請詢問亞鈺汽車相關問題，我們很高興為您服務！😄，整體字數不要超過250個字，請針對問題直接回答答案" },
-            { role: "user", content: prompt }
-          ]
+        messages: [
+          {
+            role: "system",
+            content: "你是亞鈺汽車的50年資深客服專員，擅長解決問題且擅長思考拆解問題，請先透過參考資料判斷並解析問題點，只詢問參考資料需要的問題，不要問不相關參考資料的問題，如果詢問內容不在參考資料內，請先判斷這句話是什麼類型的問題，然後針對參考資料內的資料做反問問題，最後問到需要的答案，請用最積極與充滿溫度的方式回答，若參考資料與問題無關，比如他是來聊天的，請回覆罐頭訊息：\"感謝您的詢問，請詢問亞鈺汽車相關問題，我們很高興為您服務！😄，整體字數不要超過250個字，請針對問題直接回答答案"
+          },
+          { role: "user", content: prompt }
+        ]
       });
       replyText = chatReply.choices[0].message.content.trim();
     } else {
