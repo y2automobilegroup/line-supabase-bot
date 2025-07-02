@@ -30,7 +30,7 @@ export default async function handler(req, res) {
     const gpt = await openai.chat.completions.create({
       model: "gpt-4",
       messages: [
-        { role: "system", content: "你是分類助手，請根據使用者詢問的內容，輸出 JSON 格式 { category, params }。category 僅能為以下四種之一：cars、company、address、contact。請不要輸出其他類別名稱。" },
+        { role: "system", content: "你是分類助手，請根據使用者詢問的內容，輸出 JSON 格式 { category, params }。category 僅能為以下四種之一：car、company、address、contact。請不要輸出其他類別名稱。" },
         { role: "user", content: userText }
       ]
     });
@@ -49,7 +49,7 @@ export default async function handler(req, res) {
     const { category, params } = result;
     const normalizedCategory = category.toLowerCase().replace(/s$/, ""); // car/cars → car
     const tableMap = {
-      cars: "cars",
+      car: "cars",
       company: "company_profile",
       address: "company_info",
       contact: "contact_info"
