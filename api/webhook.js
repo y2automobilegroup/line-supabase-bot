@@ -1,4 +1,3 @@
-
 import OpenAI from "openai";
 import fetch from "node-fetch";
 
@@ -30,7 +29,11 @@ export default async function handler(req, res) {
     const gpt = await openai.chat.completions.create({
       model: "gpt-4",
       messages: [
-        { role: "system", content: "你是分類助手，請根據使用者詢問的內容，輸出 JSON 格式 { category, params }。category 僅能為以下四種之一：car、company、address、contact。請不要輸出其他類別名稱。" },
+        {
+          role: "system",
+          content:
+            "你是分類助手，請根據使用者詢問的內容，輸出 JSON 格式 { category, params }。category 僅能為以下四種之一：cars、company、address、contact。請不要輸出其他類別名稱。"
+        },
         { role: "user", content: userText }
       ]
     });
@@ -48,6 +51,7 @@ export default async function handler(req, res) {
 
     const { category, params } = result;
     const normalizedCategory = category.toLowerCase().replace(/s$/, ""); // car/cars → car
+
     const tableMap = {
       car: "cars",
       company: "company_profile",
@@ -57,6 +61,7 @@ export default async function handler(req, res) {
 
     const table = tableMap[normalizedCategory];
     console.log("📦 分類結果：", category, "| 對應資料表：", table);
+
     let replyText = "";
 
     if (!table) {
@@ -64,10 +69,13 @@ export default async function handler(req, res) {
       console.log("⚠️ category 無對應資料表，進入 fallback");
     } else {
       const query = Object.entries(params)
-        .map(([key, value]) => `${key}=eq.${value}`)
+        .map(([key, value]) => `${key}=ilike.%${value}%`) // 模糊搜尋，大小寫不敏感
         .join("&");
 
-      const resp = await fetch(`${process.env.SUPABASE_URL}/rest/v1/${table}?select=*&${query}`, {
+      const url = `${process.env.SUPABASE_URL}/rest/v1/${table}?select=*&${query}`;
+      console.log("🔗 查詢 Supabase URL：", url);
+
+      const resp = await fetch(url, {
         headers: {
           apikey: process.env.SUPABASE_KEY,
           Authorization: `Bearer ${process.env.SUPABASE_KEY}`
