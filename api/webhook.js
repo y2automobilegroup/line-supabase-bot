@@ -31,20 +31,26 @@ export default async function handler(req, res) {
       messages: [
         {
           role: "system",
-          content: `你是分類助手，請根據使用者詢問的內容，輸出 JSON 格式 { "category": "...", "params": { ... } }。
-category 僅能為以下四種之一：cars、company、address、contact，請不要輸出其他類別名稱。
-
+          content: `你是分類助手，請根據使用者詢問的內容，永遠只輸出 JSON 格式：
+{ "category": "...", "params": { ... }, "followup": "..." }
 你是亞鈺汽車的50年資深客服專員，擅長解決問題且擅長思考拆解問題。
-請先透過參考資料判斷並解析問題點，只詢問參考資料需要的問題，不要問無關的問題。
+請先透過參考資料判斷並解析問題點，只詢問參考資料需要的問題，不要問不相關參考資料的問題。
+如果詢問內容不在參考資料內，請先判斷這句話是什麼類型的問題，
+然後針對參考資料內的資料做反問問題，最後問到需要的答案。
+請用最積極與充滿溫度的方式回答。
 
-若 category 為 cars，請根據下列欄位自動比對對應語意作為 params 的 key：
-可用欄位有：廠牌、車款、車型、年式、年份、變速系統、車門數、驅動方式、引擎燃料、乘客數、排氣量、顏色、首次領牌時間、行駛里程、車身號碼、車輛售價、賣家保證、聯絡人、賞車地址、檢測機構、認證書 等。
-
-若無法判斷或只是聊天，請回覆：
+若參考資料與問題無關，比如他是來聊天的，請回覆罐頭訊息：
 "感謝您的詢問，請詢問亞鈺汽車相關問題，我們很高興為您服務！😄"
 
-請將回覆簡短有溫度，總字數不要超過 100 字。
-如使用者描述模糊，請反問以釐清需求，例如：「您是想找特定品牌、年份，還是有預算考量呢？」`
+整體回覆請縮減，不要超過100個字。
+其中：
+- category 僅能為：cars、company、address、contact 四選一。
+- params 依照語意自動比對下列欄位：廠牌、車款、車型、年式、年份、變速系統、車門數、驅動方式、引擎燃料、乘客數、排氣量、顏色、首次領牌時間、行駛里程、車身號碼、車輛售價、賣家保證、聯絡人、賞車地址、檢測機構、認證書。
+- 若使用者問題模糊，請將你要反問的內容填入 followup 欄位，例如："您是想找特定品牌、年份，還是有預算考量呢？"
+- 若只是聊天或與亞鈺汽車無關，請回傳：
+  { "category": "other", "params": {}, "followup": "感謝您的詢問，請詢問亞鈺汽車相關問題，我們很高興為您服務！😄" }
+
+請注意：只允許回傳符合上述結構的 JSON 字串，不要加多餘文字。`
         },
         { role: "user", content: userText }
       ]
@@ -61,7 +67,13 @@ category 僅能為以下四種之一：cars、company、address、contact，請�
       return res.status(200).send("GPT JSON parse error");
     }
 
-    const { category, params } = result;
+    const { category, params, followup } = result;
+    if (category === "other" || followup) {
+      const replyText = followup || "我們將請專人回覆您";
+      await replyToLine(replyToken, replyText);
+      return res.status(200).send("Reply with followup");
+    }
+
     const normalizedCategory = category.toLowerCase();
 
     const tableMap = {
