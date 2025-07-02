@@ -48,17 +48,18 @@ export default async function handler(req, res) {
       return res.status(200).send("GPT JSON parse error");
     }
 
-    const { category, params } = result;
-    const normalizedCategory = category.toLowerCase().replace(/s$/, ""); // car/cars → car
-    const tableMap = {
-      cars: "cars",
-      company: "company_profile",
-      address: "company_info",
-      contact: "contact_info"
-    };
+  const { category, params } = result;
+const normalizedCategory = category.toLowerCase(); // ✅ 不要移除 s
 
-    const table = tableMap[normalizedCategory];
-    console.log("📦 分類結果：", category, "| 對應資料表：", table);
+const tableMap = {
+  cars: "cars",
+  company: "company_profile",
+  address: "company_info",
+  contact: "contact_info"
+};
+
+const table = tableMap[normalizedCategory];
+console.log("📦 分類結果：", category, "| 對應資料表：", table);
     let replyText = "";
 
     if (!table) {
