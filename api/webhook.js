@@ -1,3 +1,4 @@
+
 import OpenAI from "openai";
 import fetch from "node-fetch";
 
@@ -5,6 +6,9 @@ const openai = new OpenAI({ apiKey: process.env.OPENAI_KEY });
 
 export default async function handler(req, res) {
   try {
+    console.log("✅ 收到請求 method:", req.method);
+    console.log("📥 req.body：", req.body);
+
     if (req.method !== "POST") return res.status(405).end("Only POST allowed");
 
     const body = req.body;
@@ -12,10 +16,12 @@ export default async function handler(req, res) {
     const messageType = event?.message?.type;
     const userText = event?.message?.text;
     const replyToken = event?.replyToken;
-console.log("📩 接收到 LINE event：", JSON.stringify(event, null, 2));
-console.log("📨 messageType:", messageType);
-console.log("📝 userText:", userText);
-console.log("🔁 replyToken:", replyToken);
+
+    console.log("📩 接收到 LINE event：", event);
+    console.log("📨 messageType:", messageType);
+    console.log("📝 userText:", userText);
+    console.log("🔁 replyToken:", replyToken);
+
     if (messageType !== "text" || !userText || !replyToken) {
       console.log("❌ 非文字訊息或缺資料，略過");
       return res.status(200).send("Non-text message ignored");
@@ -41,15 +47,15 @@ console.log("🔁 replyToken:", replyToken);
     }
 
     const { category, params } = result;
+    const normalizedCategory = category.toLowerCase().replace(/s$/, ""); // car/cars → car
     const tableMap = {
-      auto: "cars",
-      cars: "cars", // 👈 加這行
+      cars: "cars",
       company: "company_profile",
       address: "company_info",
       contact: "contact_info"
     };
 
-    const table = tableMap[category];
+    const table = tableMap[normalizedCategory];
     console.log("📦 分類結果：", category, "| 對應資料表：", table);
     let replyText = "";
 
@@ -57,7 +63,10 @@ console.log("🔁 replyToken:", replyToken);
       replyText = "亞鈺客服您好，我們會請專人儘快回覆您！😊";
       console.log("⚠️ category 無對應資料表，進入 fallback");
     } else {
-      const query = new URLSearchParams(params).toString();
+      const query = Object.entries(params)
+        .map(([key, value]) => `${key}=eq.${value}`)
+        .join("&");
+
       const resp = await fetch(`${process.env.SUPABASE_URL}/rest/v1/${table}?select=*&${query}`, {
         headers: {
           apikey: process.env.SUPABASE_KEY,
@@ -68,11 +77,11 @@ console.log("🔁 replyToken:", replyToken);
       const data = await resp.json();
       console.log("🔍 Supabase 回傳資料：", data);
 
-      if (data.length > 0) {
-        if (category === "car") {
+      if (Array.isArray(data) && data.length > 0) {
+        if (normalizedCategory === "car") {
           const car = data[0];
           replyText = `推薦車款：${car.品牌} ${car.車型}，${car.年份} 年，售價 ${car.車價} 萬元`;
-        } else if (category === "address") {
+        } else if (normalizedCategory === "address") {
           replyText = `我們的地址是：${data[0].地址}`;
         } else {
           replyText = JSON.stringify(data[0], null, 2);
