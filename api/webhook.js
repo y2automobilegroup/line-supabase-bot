@@ -109,7 +109,10 @@ if (category === "cars" && (!params || Object.keys(params).length === 0)) {
 
     let replyText = "";
     if (Array.isArray(data) && data.length > 0) {
-    const prompt = `請用繁體中文、客服語氣、字數不超過250字，如果是詢問數量，直接給數量，直接回答使用者查詢條件為 ${JSON.stringify(params)}，以下是結果：\n${JSON.stringify(data)}`;
+  const prompt = `以下是使用者的提問：「${userText}」
+你可以參考以下資料：\n${JSON.stringify(data)}
+
+請直接根據提問與資料，給出一段不超過250字的回答。`;
       const chatReply = await openai.chat.completions.create({
         model: "gpt-4o",
         messages: [
