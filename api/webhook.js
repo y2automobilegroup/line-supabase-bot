@@ -42,6 +42,7 @@ export default async function handler(req, res) {
 其中：
 - category 僅能為：cars、company、address、contact 四選一。
 - params 依照語意自動比對下列欄位：廠牌、車款、車型、年式、年份、變速系統、車門數、驅動方式、引擎燃料、乘客數、排氣量、顏色、首次領牌時間、行駛里程、車身號碼、車輛售價、賣家保證、聯絡人、賞車地址、檢測機構、認證書。
+  - 若為數值條件（例如：2020年以後、低於100萬），請使用 gte / lte / eq 結構，例如：{"年份": {"gte": 2020}}
   - 若使用者問題模糊，請將你要反問的內容填入 followup 欄位，例如："您是想找特定品牌、年份，還是有預算考量呢？"
 - 若只是聊天或與亞鈺汽車無關，請回傳：
   { "category": "other", "params": {}, "followup": "感謝您的詢問，請詢問亞鈺汽車相關問題，我們很高興為您服務！😄" }
@@ -70,7 +71,6 @@ export default async function handler(req, res) {
 
     const { category, params, followup } = result;
 
-    // ✅ 主題追蹤：判斷是否更換主題（如品牌變更則清除記憶）
     const currentBrand = params?.廠牌;
     const lastBrand = topicMemory[userId]?.廠牌;
     if (currentBrand && lastBrand && currentBrand !== lastBrand) {
@@ -79,7 +79,6 @@ export default async function handler(req, res) {
       console.log("🔁 品牌改變，清除上下文記憶");
     }
 
-    // ✅ 記憶儲存
     memory[userId] = [...(memory[userId] || []), userText];
     if (Object.keys(params || {}).length > 0) {
       memory[userId].push(JSON.stringify(params));
@@ -108,7 +107,14 @@ export default async function handler(req, res) {
       replyText = "亞鈺客服您好，我們會請專人儘快回覆您！😊";
     } else {
       const query = Object.entries(params || {})
-        .map(([key, value]) => `${encodeURIComponent(key)}=ilike.${encodeURIComponent(value)}`)
+        .map(([key, value]) => {
+          if (typeof value === "object" && value !== null) {
+            if (value.gte !== undefined) return `${encodeURIComponent(key)}=gte.${encodeURIComponent(value.gte)}`;
+            if (value.lte !== undefined) return `${encodeURIComponent(key)}=lte.${encodeURIComponent(value.lte)}`;
+            if (value.eq !== undefined) return `${encodeURIComponent(key)}=eq.${encodeURIComponent(value.eq)}`;
+          }
+          return `${encodeURIComponent(key)}=ilike.${encodeURIComponent(value)}`;
+        })
         .join("&");
 
       const url = `${process.env.SUPABASE_URL}/rest/v1/${table}?select=*&${query}`;
