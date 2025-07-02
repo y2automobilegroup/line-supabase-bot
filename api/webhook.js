@@ -43,16 +43,16 @@ const parsePrice = val => {
     return total;
   };
 
-  if (val.includes("萬")) {
-    let cleaned = val.replace("元", "").replace("台幣", "").trim();
+  const cleaned = val.replace(/[元台幣\s]/g, "").trim();
+  if (cleaned.includes("萬")) {
     const numericPart = cleaned.replace("萬", "").trim();
     if (!isNaN(Number(numericPart))) {
       return Math.round(parseFloat(numericPart) * 10000);
     }
-    return parseChineseNumber(cleaned) * 10000;
+    return parseChineseNumber(numericPart) * 10000;
   }
 
-  return isNaN(Number(val)) ? val : Number(val);
+  return isNaN(Number(cleaned)) ? val : Number(cleaned);
 };
 
 export default async function handler(req, res) {
