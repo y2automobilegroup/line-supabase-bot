@@ -13,7 +13,6 @@ export default async function handler(req, res) {
     const userText = event?.message?.text;
     const replyToken = event?.replyToken;
 
-    // ✅ 防呆：只處理文字訊息，其它略過
     if (messageType !== "text" || !userText || !replyToken) {
       console.log("❌ 非文字訊息或缺資料，略過");
       return res.status(200).send("Non-text message ignored");
@@ -27,9 +26,18 @@ export default async function handler(req, res) {
       ]
     });
 
-    const result = JSON.parse(gpt.choices[0].message.content);
-    const { category, params } = result;
+    console.log("🧠 GPT 回傳內容：", gpt.choices[0].message.content);
 
+    let result;
+    try {
+      result = JSON.parse(gpt.choices[0].message.content);
+    } catch (e) {
+      console.log("❌ GPT 回傳格式錯誤，無法解析 JSON：", e.message);
+      await replyToLine(replyToken, "不好意思，我目前無法理解您的問題，我們會請專人聯繫您！");
+      return res.status(200).send("GPT JSON parse error");
+    }
+
+    const { category, params } = result;
     const tableMap = {
       car: "cars",
       company: "company_profile",
@@ -38,9 +46,13 @@ export default async function handler(req, res) {
     };
 
     const table = tableMap[category];
+    console.log("📦 分類結果：", category, "| 對應資料表：", table);
     let replyText = "";
 
-    if (table) {
+    if (!table) {
+      replyText = "亞鈺客服您好，我們會請專人儘快回覆您！😊";
+      console.log("⚠️ category 無對應資料表，進入 fallback");
+    } else {
       const query = new URLSearchParams(params).toString();
       const resp = await fetch(`${process.env.SUPABASE_URL}/rest/v1/${table}?select=*&${query}`, {
         headers: {
@@ -50,6 +62,8 @@ export default async function handler(req, res) {
       });
 
       const data = await resp.json();
+      console.log("🔍 Supabase 回傳資料：", data);
+
       if (data.length > 0) {
         if (category === "car") {
           const car = data[0];
@@ -62,25 +76,26 @@ export default async function handler(req, res) {
       } else {
         replyText = "抱歉，目前查無相關資料。";
       }
-    } else {
-      replyText = "亞鈺客服您好，我們會請專人儘快回覆您！😊";
     }
 
-    await fetch("https://api.line.me/v2/bot/message/reply", {
-      method: "POST",
-      headers: {
-        Authorization: `Bearer ${process.env.LINE_TOKEN}`,
-        "Content-Type": "application/json"
-      },
-      body: JSON.stringify({
-        replyToken,
-        messages: [{ type: "text", text: replyText }]
-      })
-    });
-
+    await replyToLine(replyToken, replyText);
     res.status(200).json({ status: "ok" });
   } catch (error) {
-    console.error("❌ webhook 錯誤：", error);
+    console.error("❌ webhook 執行錯誤：", error);
     res.status(200).send("error handled");
   }
+}
+
+async function replyToLine(replyToken, text) {
+  await fetch("https://api.line.me/v2/bot/message/reply", {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${process.env.LINE_TOKEN}`,
+      "Content-Type": "application/json"
+    },
+    body: JSON.stringify({
+      replyToken,
+      messages: [{ type: "text", text }]
+    })
+  });
 }
