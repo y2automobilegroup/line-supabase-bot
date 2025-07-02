@@ -5,6 +5,56 @@ const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
 const memory = {};
 const topicMemory = {};
 
+const parsePrice = val => {
+  if (typeof val !== "string") return val;
+
+  const chineseNumMap = {
+    "零": 0, "一": 1, "二": 2, "兩": 2, "三": 3, "四": 4,
+    "五": 5, "六": 6, "七": 7, "八": 8, "九": 9
+  };
+
+  const chineseUnitMap = {
+    "十": 10,
+    "百": 100,
+    "千": 1000,
+    "萬": 10000
+  };
+
+  const parseChineseNumber = str => {
+    let total = 0;
+    let unit = 1;
+    let num = 0;
+
+    for (let i = str.length - 1; i >= 0; i--) {
+      const char = str[i];
+      if (chineseUnitMap[char]) {
+        unit = chineseUnitMap[char];
+        if (num === 0) num = 1;
+        total += num * unit;
+        num = 0;
+        unit = 1;
+      } else if (chineseNumMap[char] !== undefined) {
+        num = chineseNumMap[char];
+      } else if (!isNaN(Number(char))) {
+        num = Number(char);
+      }
+    }
+    total += num;
+    return total;
+  };
+
+  if (val.includes("萬")) {
+    let cleaned = val.replace("元", "").replace("台幣", "").trim();
+    const numericPart = cleaned.replace("萬", "").trim();
+    if (!isNaN(Number(numericPart))) {
+      return Math.round(parseFloat(numericPart) * 10000);
+    }
+    return parseChineseNumber(cleaned) * 10000;
+  }
+
+  return isNaN(Number(val)) ? val : Number(val);
+};
+
 export default async function handler(req, res) {
   try {
     if (req.method !== "POST") return res.status(405).end("Only POST allowed");
@@ -31,7 +81,7 @@ export default async function handler(req, res) {
 }
 
 規則如下：
-1. category 為 cars 時，params 會包含車輛查詢條件（如：物件編號、廠牌、車款、車型、年式、年份、變速系統、車門數、驅動方式、引擎燃料、乘客數、排氣量、顏色、安全性配備、舒適性配備、首次領牌時間、行駛里程、車身號碼、引擎號碼、外匯車資料、車輛售價、車輛賣點、車輛副標題、賣家保證、特色說明、影片看車、物件圖片、聯絡人、行動電話、賞車地址、line、檢測機構、查定編號、認證書。）
+1. category 為 cars 時，params 會包含車輛查詢條件（如：物件編號、廠牌、車型、年式、年份、變速系統、車門數、驅動方式、引擎燃料、乘客數、排氣量、顏色、安全性配備、舒適性配備、首次領牌時間、行駛里程、車身號碼、引擎號碼、外匯車資料、車輛售價、車輛賣點、車輛副標題、賣家保證、特色說明、影片看車、物件圖片、聯絡人、行動電話、賞車地址、line、檢測機構、查定編號、認證書。）
 2. 若是延續性提問（例如「還有幾台」、「哪幾款」），請使用之前的條件。
 3. 若換了品牌（如 BMW → Toyota），則清除前次條件，開啟新查詢。
 4. 數值條件請用 gte / lte / eq，例如：{ "年份": { "gte": 2020 } }
@@ -83,9 +133,9 @@ export default async function handler(req, res) {
     const query = Object.entries(params || {})
       .map(([key, value]) => {
         if (typeof value === "object") {
-          if (value.gte !== undefined) return `${key}=gte.${value.gte}`;
-          if (value.lte !== undefined) return `${key}=lte.${value.lte}`;
-          if (value.eq !== undefined) return `${key}=eq.${value.eq}`;
+          if (value.gte !== undefined) return `${key}=gte.${parsePrice(value.gte)}`;
+          if (value.lte !== undefined) return `${key}=lte.${parsePrice(value.lte)}`;
+          if (value.eq !== undefined) return `${key}=eq.${parsePrice(value.eq)}`;
         }
         return `${key}=ilike.${value}`;
       })
