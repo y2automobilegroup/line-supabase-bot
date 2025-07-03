@@ -118,12 +118,25 @@ export default async function handler(req, res) {
       return res.status(200).send("Irrelevant message");
     }
 
-    const tablePriority = ["company", "cars"];
-    let data = [];
-    let finalTable = "";
+    const tableMap = {
+      cars: "cars",
+      company: "company",
+      address: "company",
+      contact: "company"
+    };
+    const table = tableMap[category?.toLowerCase?.()];
+    if (!table) {
+      await replyToLine(replyToken, "我們會請專人儘快回覆您！");
+      return res.status(200).send("Unknown category");
+    }
 
-    for (const tbl of tablePriority) {
-      const query = Object.entries(params || {})
+    let query = "";
+    if (category === "company") {
+      const keyword = encodeURIComponent(userText);
+      const fields = ['分店名稱','地址','說明','營業時間','line','電話'];
+      query = `or=(${fields.map(f => `${f}.ilike.*${keyword}*`).join(',')})`;
+    } else {
+      query = Object.entries(params || {})
         .map(([key, value]) => {
           if (typeof value === "object") {
             if (value.gte !== undefined) return `${key}=gte.${parsePrice(value.gte)}`;
@@ -133,40 +146,34 @@ export default async function handler(req, res) {
           return `${key}=ilike.${value}`;
         })
         .join("&");
+    }
 
-      const url = `${process.env.SUPABASE_URL}/rest/v1/${tbl}?select=*&${query}`;
-      console.log(`🚀 查詢 Supabase URL (${tbl}):`, url);
-
-      const resp = await fetch(url, {
-        headers: {
-          apikey: process.env.SUPABASE_KEY,
-          Authorization: `Bearer ${process.env.SUPABASE_KEY}`
-        }
-      });
-
-      const rawText = await resp.text();
-      try {
-        data = JSON.parse(rawText);
-        if (Array.isArray(data) && data.length > 0) {
-          finalTable = tbl;
-          break;
-        }
-      } catch (e) {
-        console.error(`⚠️ Supabase ${tbl} 回傳非 JSON：`, rawText);
+    const url = `${process.env.SUPABASE_URL}/rest/v1/${table}?select=*&${query}`;
+    console.log("🚀 查詢 Supabase URL:", url);
+    const resp = await fetch(url, {
+      headers: {
+        apikey: process.env.SUPABASE_KEY,
+        Authorization: `Bearer ${process.env.SUPABASE_KEY}`
       }
+    });
+
+    const rawText = await resp.text();
+    let data;
+    try {
+      data = JSON.parse(rawText);
+    } catch (e) {
+      console.error("⚠️ Supabase 回傳非 JSON：", rawText);
+      await replyToLine(replyToken, "目前資料查詢異常，我們會請專人協助您！");
+      return res.status(200).send("Supabase 非 JSON 錯誤");
     }
 
     let replyText = "";
-    if (data.length > 0) {
-      const prompt = `請用繁體中文、客服語氣、字數不超過250字，根據資料表 ${finalTable} 查詢條件為 ${JSON.stringify(params)}，結果如下：\n${JSON.stringify(data)}`;
+    if (Array.isArray(data) && data.length > 0) {
+      const prompt = `請用繁體中文、客服語氣、字數不超過250字，如果是詢問數量，直接給數量，直接回答使用者查詢條件為 ${JSON.stringify(params)}，以下是結果：\n${JSON.stringify(data)}`;
       const chatReply = await openai.chat.completions.create({
         model: "gpt-4o",
         messages: [
-          {
-            role: "system",
-            content:
-              "你是亞鈺汽車的50年資深客服專員，擅長解決問題且擅長思考拆解問題，請先透過參考資料判斷並解析問題點，只詢問參考資料需要的問題，不要問不相關參考資料的問題，如果詢問內容不在參考資料內，請先判斷這句話是什麼類型的問題，然後針對參考資料內的資料做反問問題，最後問到需要的答案，請用最積極與充滿溫度的方式回答，若參考資料與問題無關，比如他是來聊天的，請回覆罐頭訊息：\"感謝您的詢問，請詢問亞鈺汽車相關問題，我們很高興為您服務！😄\"，整體字數不要超過250個字，請針對問題直接回答答案"
-          },
+          { role: "system", content: "你是亞鈺汽車的50年資深客服專員，擅長解決問題且擅長思考拆解問題，請先透過參考資料判斷並解析問題點，只詢問參考資料需要的問題，不要問不相關參考資料的問題，如果詢問內容不在參考資料內，請先判斷這句話是什麼類型的問題，然後針對參考資料內的資料做反問問題，最後問到需要的答案，請用最積極與充滿溫度的方式回答，若參考資料與問題無關，比如他是來聊天的，請回覆罐頭訊息：\"感謝您的詢問，請詢問亞鈺汽車相關問題，我們很高興為您服務！😄\"，整體字數不要超過250個字，請針對問題直接回答答案" },
           { role: "user", content: prompt }
         ]
       });
