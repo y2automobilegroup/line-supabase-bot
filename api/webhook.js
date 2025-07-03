@@ -81,7 +81,7 @@ export default async function handler(req, res) {
 }
 
 規則如下：
-1. category 為 cars 時，params 會包含車輛查詢條件（如：物件編號、廠牌、車型、年式、年份、變速系統、車門數、驅動方式、引擎燃料、乘客數、排氣量、顏色、安全性配備、舒適性配備、首次領牌時間、行駛里程、車身號碼、引擎號碼、外匯車資料、車輛售價、車輛賣點、車輛副標題、賣家保證、特色說明、影片看車、物件圖片、聯絡人、行動電話、賞車地址、line、檢測機構、查定編號、認證書。）
+1. category 為 cars 時，params 會包含車輛查詢條件（如：物件編號、廠牌、車款、車型、年式、年份、變速系統、車門數、驅動方式、引擎燃料、乘客數、排氣量、顏色、安全性配備、舒適性配備、首次領牌時間、行駛里程、車身號碼、引擎號碼、外匯車資料、車輛售價、車輛賣點、車輛副標題、賣家保證、特色說明、影片看車、物件圖片、聯絡人、行動電話、賞車地址、line、檢測機構、查定編號、認證書。）
 2. 若是延續性提問（例如「還有幾台」、「哪幾款」），請使用之前的條件。
 3. 若換了品牌（如 BMW → Toyota），則清除前次條件，開啟新查詢。
 4. 數值條件請用 gte / lte / eq，例如：{ "年份": { "gte": 2020 } }
@@ -118,6 +118,39 @@ export default async function handler(req, res) {
       return res.status(200).send("Irrelevant message");
     }
 
+    // 👇 新增：優先查詢 company 表中是否包含 userText
+    if (category === "company") {
+      const companyUrl = `${process.env.SUPABASE_URL}/rest/v1/company?select=*`;
+      const companyResp = await fetch(companyUrl, {
+        headers: {
+          apikey: process.env.SUPABASE_KEY,
+          Authorization: `Bearer ${process.env.SUPABASE_KEY}`
+        }
+      });
+      const companyData = await companyResp.json();
+      const matched = companyData.filter(row =>
+        Object.values(row).some(val => typeof val === "string" && val.includes(userText))
+      );
+
+      if (matched.length > 0) {
+        const prompt = `請用繁體中文、客服語氣，針對使用者詢問「${userText}」，以下是公司相關資料：\n${JSON.stringify(matched.slice(0, 3))}`;
+        const chatReply = await openai.chat.completions.create({
+          model: "gpt-4o",
+          messages: [
+            {
+              role: "system",
+              content:
+                "你是亞鈺汽車的客服助理，請根據資料回覆使用者，語氣自然、字數不超過250字。"
+            },
+            { role: "user", content: prompt }
+          ]
+        });
+        const replyText = chatReply.choices[0].message.content.trim();
+        await replyToLine(replyToken, replyText);
+        return res.status(200).json({ status: "company matched" });
+      }
+    }
+
     const tableMap = {
       cars: "cars",
       company: "company",
@@ -130,24 +163,16 @@ export default async function handler(req, res) {
       return res.status(200).send("Unknown category");
     }
 
-    let query = "";
-    if (category === "company") {
-      const keyword = encodeURIComponent(userText);
-      const fields = ['五日鑑賞','八大保固','營業時間與地址','我的車可以估價嗎？要提供什麼？','多久可以給估價？','估價後價格可以談嗎？','你們有到府估車嗎？','我們目前以來店估價為主，若車輛不便移動，可視地點提供到府估價服務，歡迎來電確認！','我車有事故或烤過漆會影響估價嗎？','我車還有貸款可以賣嗎？','成交後多久可以撥款？','過戶流程誰處理？需要我自己跑嗎？','過戶流程由我們全程代辦，您只需要準備好相關證件（身分證＋印章＋行照＋強制險），我們幫您辦到好。','可以用我的舊車折抵換新車嗎？','當然可以！我們提供高價收購舊車＋折抵購車優惠，讓您一站式完成換車，還能省下不少費用！','估價之後我可以不賣嗎？','收購價是比行情高嗎？怎麼保證不被壓價？','我只有車牌號碼／行照可以估嗎？','可以現場當天就完成整個收購流程嗎？','關於亞鈺汽車','亞鈺發展歷程'
-];
-      query = `or=(${fields.map(f => `${f}.ilike.*${keyword}*`).join(',')})`;
-    } else {
-      query = Object.entries(params || {})
-        .map(([key, value]) => {
-          if (typeof value === "object") {
-            if (value.gte !== undefined) return `${key}=gte.${parsePrice(value.gte)}`;
-            if (value.lte !== undefined) return `${key}=lte.${parsePrice(value.lte)}`;
-            if (value.eq !== undefined) return `${key}=eq.${parsePrice(value.eq)}`;
-          }
-          return `${key}=ilike.${value}`;
-        })
-        .join("&");
-    }
+    const query = Object.entries(params || {})
+      .map(([key, value]) => {
+        if (typeof value === "object") {
+          if (value.gte !== undefined) return `${key}=gte.${parsePrice(value.gte)}`;
+          if (value.lte !== undefined) return `${key}=lte.${parsePrice(value.lte)}`;
+          if (value.eq !== undefined) return `${key}=eq.${parsePrice(value.eq)}`;
+        }
+        return `${key}=ilike.${value}`;
+      })
+      .join("&");
 
     const url = `${process.env.SUPABASE_URL}/rest/v1/${table}?select=*&${query}`;
     console.log("🚀 查詢 Supabase URL:", url);
@@ -180,7 +205,7 @@ export default async function handler(req, res) {
       });
       replyText = chatReply.choices[0].message.content.trim();
     } else {
-      replyText = "目前查無符合條件的資料，您還有其他需求嗎？";
+      replyText = "目前查無符合條件的車輛，您還有其他需求嗎？";
     }
 
     await replyToLine(replyToken, replyText);
