@@ -118,7 +118,7 @@ export default async function handler(req, res) {
       return res.status(200).send("Irrelevant message");
     }
 
-    const tablePriority = ["company_profile", "cars"];
+    const tablePriority = ["company", "cars"];
     let data = [];
     let finalTable = "";
 
