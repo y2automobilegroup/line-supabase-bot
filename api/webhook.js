@@ -1,32 +1,60 @@
 // api/webhook.js
 import { querySmartReply } from '../lib/querySmartReply.js';
+import dotenv from 'dotenv';
+dotenv.config();
 
-// webhook handler 必須為具名的 async function，Vercel 才能正確識別
-export async function POST(req) {
+export default async function handler(req, res) {
+  if (req.method !== 'POST') {
+    return res.status(405).send('Method Not Allowed');
+  }
+
   try {
-    const body = await req.json();
+    const body = await readRequestBody(req);
     const event = body.events?.[0];
-    const userMessage = event?.message?.text;
-    const replyToken = event?.replyToken;
 
-    if (!userMessage || !replyToken) {
-      return new Response('Invalid request', { status: 400 });
+    if (!event || !event.message?.text || !event.replyToken) {
+      return res.status(400).send('Invalid request');
     }
 
-    const { answer } = await querySmartReply(userMessage);
-    const replyText = answer || '感謝您的詢問，請詢問亞鈺汽車相關問題，我們很高興為您服務！😄';
+    const userMessage = event.message.text;
+    const replyToken = event.replyToken;
+
+    const { answer, source } = await querySmartReply(userMessage);
+    const replyText = formatResponseByRole(answer, source);
 
     await sendReply(replyToken, replyText);
-
-    return new Response('OK', { status: 200 });
-  } catch (err) {
-    console.error('Webhook Error:', err);
-    return new Response('Internal Server Error', { status: 500 });
+    return res.status(200).send('OK');
+  } catch (error) {
+    console.error('Webhook handler error:', error);
+    return res.status(500).send('Internal Server Error');
   }
 }
 
+async function readRequestBody(req) {
+  return new Promise((resolve, reject) => {
+    let body = '';
+    req.on('data', (chunk) => {
+      body += chunk.toString();
+    });
+    req.on('end', () => {
+      try {
+        resolve(JSON.parse(body));
+      } catch (err) {
+        reject(err);
+      }
+    });
+  });
+}
+
+function formatResponseByRole(answer, source) {
+  if (!answer) {
+    return '感謝您的詢問，請詢問亞鈺汽車相關問題，我們很高興為您服務！😄';
+  }
+  return answer;
+}
+
 async function sendReply(replyToken, text) {
-  const res = await fetch('https://api.line.me/v2/bot/message/reply', {
+  await fetch('https://api.line.me/v2/bot/message/reply', {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
@@ -37,9 +65,4 @@ async function sendReply(replyToken, text) {
       messages: [{ type: 'text', text }],
     }),
   });
-
-  if (!res.ok) {
-    const errorText = await res.text();
-    console.error('LINE API 回應錯誤:', errorText);
-  }
 }
