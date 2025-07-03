@@ -15,29 +15,33 @@ import { querySmartReply } from '../lib/querySmartReply.js';
 
 export default async function handler(req, res) {
   if (req.method !== 'POST') {
-    return res.status(405).json({ error: 'Method Not Allowed' });
+    return res.status(405).send('Method Not Allowed');
+  }
+
+  const events = req.body.events;
+
+  // ✅ Line Webhook 驗證請求時 events 會是空陣列，需回 200
+  if (!Array.isArray(events) || events.length === 0) {
+    return res.status(200).send('No event to process');
   }
 
   try {
-    const body = req.body;
-    const event = body.events?.[0];
+    for (const event of events) {
+      if (event.type === 'message' && event.message.type === 'text') {
+        const userMessage = event.message.text;
+        const replyToken = event.replyToken;
 
-    if (!event || event.type !== 'message' || !event.message?.text || !event.replyToken) {
-      console.warn('Invalid webhook event:', JSON.stringify(body, null, 2));
-      return res.status(400).json({ error: 'Invalid request format' });
+        const { answer, source } = await querySmartReply(userMessage);
+        const replyText = formatResponseByRole(answer, source);
+
+        await sendReply(replyToken, replyText);
+      }
     }
 
-    const userMessage = event.message.text;
-    const replyToken = event.replyToken;
-
-    const { answer, source } = await querySmartReply(userMessage);
-    const replyText = formatResponseByRole(answer, source);
-
-    await sendReply(replyToken, replyText);
-    return res.status(200).json({ success: true });
+    return res.status(200).send('OK');
   } catch (err) {
     console.error('Webhook Error:', err);
-    return res.status(500).json({ error: 'Internal Server Error' });
+    return res.status(500).send('Internal Server Error');
   }
 }
 
@@ -49,7 +53,7 @@ function formatResponseByRole(answer, sourceType = '') {
 }
 
 async function sendReply(replyToken, text) {
-  const res = await fetch('https://api.line.me/v2/bot/message/reply', {
+  const response = await fetch('https://api.line.me/v2/bot/message/reply', {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
@@ -61,8 +65,8 @@ async function sendReply(replyToken, text) {
     }),
   });
 
-  if (!res.ok) {
-    const errorBody = await res.text();
+  if (!response.ok) {
+    const errorBody = await response.text();
     console.error('LINE Reply API error:', errorBody);
   }
 }
