@@ -1,172 +1,42 @@
-import OpenAI from "openai";
-import fetch from "node-fetch";
-
-const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
-const memory = {};
-const topicMemory = {};
-
-const tableMap = {
-  cars: "cars",
-  company: "company",
-  address: "company",
-  contact: "company",
-};
+// api/webhook.js
+import { querySmartReply } from '../lib/querySmartReply.js';
+import dotenv from 'dotenv';
+dotenv.config();
 
 export default async function handler(req, res) {
+  if (req.method !== 'POST') {
+    return res.status(405).end();
+  }
+
+  const event = req.body.events?.[0];
+  const userMessage = event?.message?.text;
+  const replyToken = event?.replyToken;
+
+  if (!userMessage || !replyToken) {
+    return res.status(400).send('Invalid request');
+  }
+
   try {
-    if (req.method !== "POST") return res.status(405).end("Only POST allowed");
+    const replyText = await querySmartReply(userMessage);
 
-    const body = req.body;
-    const event = body.events?.[0];
-    const userText = event?.message?.text;
-    const replyToken = event?.replyToken;
-    const userId = event?.source?.userId;
-
-    if (!userText || !replyToken) return res.status(200).send("Invalid message");
-
-    // 🔍 Step 1: check company table for keyword match
-    const keyword = encodeURIComponent(userText.trim());
-    const companyUrl = `${process.env.SUPABASE_URL}/rest/v1/company?select=*&or=(title.ilike.*${keyword}*,content.ilike.*${keyword}*)`;
-    const companyResp = await fetch(companyUrl, {
-      headers: {
-        apikey: process.env.SUPABASE_KEY,
-        Authorization: `Bearer ${process.env.SUPABASE_KEY}`
-      }
-    });
-    const companyData = await companyResp.json();
-    if (Array.isArray(companyData) && companyData.length > 0) {
-      const content = companyData[0].content || JSON.stringify(companyData[0]);
-      await replyToLine(replyToken, content);
-      return res.status(200).json({ status: "replied from company" });
-    }
-
-    // Step 2: proceed to GPT interpretation
-    const contextMessages = memory[userId]?.map(text => ({ role: "user", content: text })) || [];
-    const gpt = await openai.chat.completions.create({
-      model: "gpt-4o",
-      messages: [
-        {
-          role: "system",
-          content: `你是亞鈺汽車的客服助手，請用以下 JSON 結構分析使用者訊息，並只回傳該 JSON：
-{
-  "category": "cars" | "company" | "address" | "contact" | "other",
-  "params": { ... },
-  "followup": "..."
-}
-
-規則如下：
-1. category 為 cars 時，params 會包含車輛查詢條件（如：物件編號、廠牌、車型、年式、年份、變速系統、車門數、驅動方式、引擎燃料、乘客數、排氣量、顏色、安全性配備、舒適性配備、首次領牌時間、行駛里程、車身號碼、引擎號碼、外匯車資料、車輛售價、車輛賣點、車輛副標題、賣家保證、特色說明、影片看車、物件圖片、聯絡人、行動電話、賞車地址、line、檢測機構、查定編號、認證書。）
-2. 若是延續性提問（例如「還有幾台」、「哪幾款」），請使用之前的條件。
-3. 若換了品牌（如 BMW → Toyota），則清除前次條件，開啟新查詢。
-4. 數值條件請用 gte / lte / eq，例如：{ "年份": { "gte": 2020 } }
-5. 若無法判斷，請回傳 { "category": "other", "params": {}, "followup": "請詢問亞鈺汽車相關問題，謝謝！" }`
-        },
-        ...contextMessages,
-        { role: "user", content: userText }
-      ]
-    });
-
-    let result;
-    try {
-      result = JSON.parse(gpt.choices[0].message.content.trim().replace(/^```json\n?|\n?```$/g, ""));
-    } catch (e) {
-      await replyToLine(replyToken, "不好意思，請再試一次，我們會請專人協助您！");
-      return res.status(200).send("GPT JSON parse error");
-    }
-
-    const { category, params, followup } = result;
-    const currentBrand = params?.廠牌;
-    const lastParams = topicMemory[userId] || {};
-    const lastBrand = lastParams.廠牌;
-
-    if (currentBrand && currentBrand !== lastBrand) {
-      memory[userId] = [userText];
-      topicMemory[userId] = { ...params };
-    } else {
-      memory[userId] = [...(memory[userId] || []), userText];
-      topicMemory[userId] = { ...lastParams, ...params };
-    }
-
-    if (category === "other") {
-      await replyToLine(replyToken, followup || "請詢問亞鈺汽車相關問題，謝謝！");
-      return res.status(200).send("Irrelevant message");
-    }
-
-    const table = tableMap[category?.toLowerCase?.()];
-    if (!table) {
-      await replyToLine(replyToken, "我們會請專人儘快回覆您！");
-      return res.status(200).send("Unknown category");
-    }
-
-    const parsePrice = val => {
-      if (typeof val !== "string") return val;
-      const cleaned = val.replace(/[萬元台幣\s]/g, "").trim();
-      if (!isNaN(Number(cleaned))) return Number(cleaned) * 10000;
-      return val;
-    };
-
-    const query = Object.entries(params || {})
-      .map(([key, value]) => {
-        if (typeof value === "object") {
-          if (value.gte !== undefined) return `${key}=gte.${parsePrice(value.gte)}`;
-          if (value.lte !== undefined) return `${key}=lte.${parsePrice(value.lte)}`;
-          if (value.eq !== undefined) return `${key}=eq.${parsePrice(value.eq)}`;
-        }
-        return `${key}=ilike.${value}`;
-      })
-      .join("&");
-
-    const url = `${process.env.SUPABASE_URL}/rest/v1/${table}?select=*&${query}`;
-    const resp = await fetch(url, {
-      headers: {
-        apikey: process.env.SUPABASE_KEY,
-        Authorization: `Bearer ${process.env.SUPABASE_KEY}`
-      }
-    });
-
-    const rawText = await resp.text();
-    let data;
-    try {
-      data = JSON.parse(rawText);
-    } catch (e) {
-      console.error("⚠️ Supabase 回傳非 JSON：", rawText);
-      await replyToLine(replyToken, "目前資料查詢異常，我們會請專人協助您！");
-      return res.status(200).send("Supabase 非 JSON 錯誤");
-    }
-
-    let replyText = "";
-    if (Array.isArray(data) && data.length > 0) {
-      const prompt = `請用繁體中文、客服語氣、字數不超過250字，如果是詢問數量，直接給數量，直接回答使用者查詢條件為 ${JSON.stringify(params)}，以下是結果：\n${JSON.stringify(data)}`;
-      const chatReply = await openai.chat.completions.create({
-        model: "gpt-4o",
-        messages: [
-          { role: "system", content: "你是亞鈺汽車的50年資深客服專員，擅長解決問題且擅長思考拆解問題，整體字數不要超過250個字，請針對問題直接回答答案" },
-          { role: "user", content: prompt }
-        ]
-      });
-      replyText = chatReply.choices[0].message.content.trim();
-    } else {
-      replyText = "目前查無符合條件的資料，您還有其他需求嗎？";
-    }
-
-    await replyToLine(replyToken, replyText);
-    res.status(200).json({ status: "ok" });
-  } catch (error) {
-    console.error("❌ webhook 錯誤：", error);
-    res.status(200).send("error handled");
+    await sendReply(replyToken, replyText);
+    return res.status(200).send('OK');
+  } catch (err) {
+    console.error('Webhook Error:', err);
+    return res.status(500).send('Internal Error');
   }
 }
 
-async function replyToLine(replyToken, text) {
-  await fetch("https://api.line.me/v2/bot/message/reply", {
-    method: "POST",
+async function sendReply(replyToken, text) {
+  await fetch('https://api.line.me/v2/bot/message/reply', {
+    method: 'POST',
     headers: {
-      Authorization: `Bearer ${process.env.LINE_TOKEN}`,
-      "Content-Type": "application/json"
+      'Content-Type': 'application/json',
+      'Authorization': `Bearer ${process.env.LINE_CHANNEL_ACCESS_TOKEN}`,
     },
     body: JSON.stringify({
       replyToken,
-      messages: [{ type: "text", text }]
-    })
+      messages: [{ type: 'text', text }],
+    }),
   });
 }
