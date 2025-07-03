@@ -7,26 +7,27 @@ export async function querySmartReply(userInput) {
   try {
     const pineconeResponse = await queryPinecone(userInput);
 
-    if (pineconeResponse && pineconeResponse.score >= parseFloat(process.env.PINECONE_SCORE_THRESHOLD || '0.8')) {
-      return { answer: formatAnswer(pineconeResponse.text), source: 'Pinecone' };
+    if (pineconeResponse && pineconeResponse.score >= parseFloat(process.env.PINECONE_SCORE_THRESHOLD || '0.5')) {
+      return { answer: formatAnswerWithRole(pineconeResponse.text), source: 'Pinecone' };
     }
 
     const supabaseResponse = await querySupabase(userInput);
     if (supabaseResponse) {
-      return { answer: formatAnswer(supabaseResponse), source: 'Supabase' };
+      return { answer: formatAnswerWithRole(supabaseResponse), source: 'Supabase' };
     }
 
-    return { answer: formatAnswer(null), source: 'NotFound' };
+    return { answer: formatAnswerWithRole(null), source: 'NotFound' };
   } catch (error) {
     console.error('querySmartReply error:', error);
-    return { answer: formatAnswer(null), source: 'Error' };
+    return { answer: formatAnswerWithRole(null), source: 'Error' };
   }
 }
 
-function formatAnswer(text) {
+function formatAnswerWithRole(text) {
   if (!text) {
     return '感謝您的詢問，請詢問亞鈺汽車相關問題，我們很高興為您服務！😄';
   }
+  // 可擴充為加角色提示的語意格式化，例如加入前綴語
   return text.length > 250 ? text.slice(0, 247) + '...' : text;
 }
 
