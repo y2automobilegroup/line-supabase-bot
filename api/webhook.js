@@ -1,9 +1,7 @@
 // api/webhook.js
 import { querySmartReply } from '../lib/querySmartReply.js';
 
-/**
- * 處理 LINE webhook POST 請求
- */
+// webhook handler 必須為具名的 async function，Vercel 才能正確識別
 export async function POST(req) {
   try {
     const body = await req.json();
@@ -16,20 +14,19 @@ export async function POST(req) {
     }
 
     const { answer } = await querySmartReply(userMessage);
+    const replyText = answer || '感謝您的詢問，請詢問亞鈺汽車相關問題，我們很高興為您服務！😄';
 
-    await sendReply(replyToken, answer);
+    await sendReply(replyToken, replyText);
+
     return new Response('OK', { status: 200 });
   } catch (err) {
     console.error('Webhook Error:', err);
-    return new Response('Internal Error', { status: 500 });
+    return new Response('Internal Server Error', { status: 500 });
   }
 }
 
-/**
- * 發送回覆訊息至 LINE
- */
 async function sendReply(replyToken, text) {
-  await fetch('https://api.line.me/v2/bot/message/reply', {
+  const res = await fetch('https://api.line.me/v2/bot/message/reply', {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
@@ -40,4 +37,9 @@ async function sendReply(replyToken, text) {
       messages: [{ type: 'text', text }],
     }),
   });
+
+  if (!res.ok) {
+    const errorText = await res.text();
+    console.error('LINE API 回應錯誤:', errorText);
+  }
 }
