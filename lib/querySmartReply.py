@@ -1,145 +1,185 @@
+import OpenAI from "openai";
+import fetch from "node-fetch";
 
-import os, uuid, json
-from flask import Flask, request
-from dotenv import load_dotenv
-from collections import defaultdict, deque
+const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
+const memory = {};
+const topicMemory = {};
 
-# LINE SDK
-from linebot.v3.messaging import MessagingApi, Configuration, ApiClient, ReplyMessageRequest, TextMessage
-from linebot.v3.webhook import WebhookParser
-from linebot.v3.webhooks import MessageEvent, TextMessageContent
+const parsePrice = val => {
+  if (typeof val !== "string") return val;
 
-# OpenAI & Supabase
-from openai import OpenAI
-from supabase import create_client, Client
+  const chineseNumMap = {
+    "零": 0, "一": 1, "二": 2, "兩": 2, "三": 3, "四": 4,
+    "五": 5, "六": 6, "七": 7, "八": 8, "九": 9
+  };
 
-# ─────────────────────────────────────────────
-# 初始化
-# ─────────────────────────────────────────────
-load_dotenv()
+  const chineseUnitMap = {
+    "十": 10,
+    "百": 100,
+    "千": 1000,
+    "萬": 10000
+  };
 
-openai_client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
+  const parseChineseNumber = str => {
+    let total = 0;
+    let unit = 1;
+    let num = 0;
 
-# Supabase client
-SUPABASE_URL = os.getenv("SUPABASE_URL")
-SUPABASE_KEY = os.getenv("SUPABASE_KEY")
-SUPABASE_TABLE_CARS = os.getenv("SUPABASE_TABLE_CARS", "cars")
-SUPABASE_TABLE_COMPANY = os.getenv("SUPABASE_TABLE_COMPANY", "company")
-supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
+    for (let i = str.length - 1; i >= 0; i--) {
+      const char = str[i];
+      if (chineseUnitMap[char]) {
+        unit = chineseUnitMap[char];
+        if (num === 0) num = 1;
+        total += num * unit;
+        num = 0;
+        unit = 1;
+      } else if (chineseNumMap[char] !== undefined) {
+        num = chineseNumMap[char];
+      } else if (!isNaN(Number(char))) {
+        num = Number(char);
+      }
+    }
+    total += num;
+    return total;
+  };
 
-configuration = Configuration(access_token=os.getenv("LINE_CHANNEL_ACCESS_TOKEN"))
-parser = WebhookParser(os.getenv("LINE_CHANNEL_SECRET"))
+  const cleaned = val.replace(/[元台幣\s]/g, "").trim();
+  if (cleaned.includes("萬")) {
+    const numericPart = cleaned.replace("萬", "").trim();
+    if (!isNaN(Number(numericPart))) {
+      return Math.round(parseFloat(numericPart) * 10000);
+    }
+    return parseChineseNumber(numericPart) * 10000;
+  }
 
-app = Flask(__name__)
+  return isNaN(Number(cleaned)) ? val : Number(cleaned);
+};
 
-# 對話記憶 & 人工客服模式
-user_memory = defaultdict(lambda: deque(maxlen=10))
-manual_mode = set()
+export default async function handler(req, res) {
+  try {
+    if (req.method !== "POST") return res.status(405).end("Only POST allowed");
 
-# ─────────────────────────────────────────────
-# 共用工具
-# ─────────────────────────────────────────────
-def embed_text(text: str) -> list:
-    """Call OpenAI embeddings"""
-    emb = openai_client.embeddings.create(
-        model="text-embedding-3-small",
-        input=[text]
-    )
-    return emb.data[0].embedding
+    const body = req.body;
+    const event = body.events?.[0];
+    const userText = event?.message?.text;
+    const replyToken = event?.replyToken;
+    const userId = event?.source?.userId;
 
+    if (!userText || !replyToken) return res.status(200).send("Invalid message");
 
-def query_pgvector(table: str, query_vec: list, limit: int = 5):
-    """Call Postgres function match_vectors for pgvector ANN"""
-    return supabase.rpc(
-        "match_vectors",  # 需在資料庫先建立 function
-        {"tbl": table, "query_vec": query_vec, "match_limit": limit}
-    ).execute().data or []
+    const contextMessages = memory[userId]?.map(text => ({ role: "user", content: text })) || [];
+    const gpt = await openai.chat.completions.create({
+      model: "gpt-4o",
+      messages: [
+        {
+          role: "system",
+          content: `你是亞鈺汽車的客服助手，請用以下 JSON 結構分析使用者訊息，並只回傳該 JSON：
+{
+  "category": "cars" | "company" | "other",
+  "params": { ... },
+  "followup": "..."
+}
 
+規則如下：
+1. category 為 cars 時，params 會包含車輛查詢條件（如：物件編號、廠牌、車型、年份、價格等）。
+2. category 為 company 時，params 為使用者問的關鍵字（如：保固、地址、營業時間等）
+3. 若無法判斷，請回傳 { "category": "other", "params": {}, "followup": "請詢問亞鈺汽車相關問題，謝謝！" }`
+        },
+        ...contextMessages,
+        { role: "user", content: userText }
+      ]
+    });
 
-# ─────────────────────────────────────────────
-# LINE Webhook
-# ─────────────────────────────────────────────
-@app.route("/callback", methods=["POST"])
-def callback():
-    signature = request.headers.get("x-line-signature")
-    body = request.get_data(as_text=True)
+    let result;
+    try {
+      result = JSON.parse(gpt.choices[0].message.content.trim().replace(/^```json\n?|\n?```$/g, ""));
+    } catch (e) {
+      await replyToLine(replyToken, "不好意思，請再試一次，我們會請專人協助您！");
+      return res.status(200).send("GPT JSON parse error");
+    }
 
-    try:
-        events = parser.parse(body, signature)
-    except Exception:
-        return "Invalid signature", 400
+    const { category, params, followup } = result;
+    const currentBrand = params?.廠牌;
+    const lastParams = topicMemory[userId] || {};
+    const lastBrand = lastParams.廠牌;
 
-    with ApiClient(configuration) as api_client:
-        line_bot_api = MessagingApi(api_client)
+    if (currentBrand && currentBrand !== lastBrand) {
+      memory[userId] = [userText];
+      topicMemory[userId] = { ...params };
+    } else {
+      memory[userId] = [...(memory[userId] || []), userText];
+      topicMemory[userId] = { ...lastParams, ...params };
+    }
 
-        for event in events:
-            if isinstance(event, MessageEvent) and isinstance(event.message, TextMessageContent):
-                user_id = event.source.user_id
-                query = event.message.text.strip()
-                user_memory[user_id].append({ "role": "user", "content": query })
+    if (category === "other") {
+      await replyToLine(replyToken, followup || "請詢問亞鈺汽車相關問題，謝謝！");
+      return res.status(200).send("Irrelevant message");
+    }
 
-                # 人工客服切換
-                if query == "人工客服您好":
-                    manual_mode.add(user_id)
-                    return "OK", 200
-                if query == "人工客服結束":
-                    manual_mode.discard(user_id)
-                    return "OK", 200
-                if user_id in manual_mode:
-                    return "OK", 200
+    const table = category === "cars" ? "cars" : "company";
+    const query = Object.entries(params || {})
+      .map(([key, value]) => {
+        if (typeof value === "object") {
+          if (value.gte !== undefined) return `${key}=gte.${parsePrice(value.gte)}`;
+          if (value.lte !== undefined) return `${key}=lte.${parsePrice(value.lte)}`;
+          if (value.eq !== undefined) return `${key}=eq.${parsePrice(value.eq)}`;
+        }
+        return `${key}=ilike.%${value}%`;
+      })
+      .join("&");
 
-                # 向量化問題
-                q_vec = embed_text(query)
+    const url = `${process.env.SUPABASE_URL}/rest/v1/${table}?select=*&${query}`;
+    console.log("🚀 查詢 Supabase URL:", url);
+    const resp = await fetch(url, {
+      headers: {
+        apikey: process.env.SUPABASE_KEY,
+        Authorization: `Bearer ${process.env.SUPABASE_KEY}`
+      }
+    });
 
-                # 先查 cars
-                car_rows = query_pgvector(SUPABASE_TABLE_CARS, q_vec, limit=5)
-                context_blocks = []
-                if car_rows:
-                    for r in car_rows:
-                        context_blocks.append(
-                            f"{r.get('廠牌','')} {r.get('車款','')} {r.get('年式','')} "
-                            f"售價：{r.get('車輛售價','N/A')}"
-                        )
+    const rawText = await resp.text();
+    let data;
+    try {
+      data = JSON.parse(rawText);
+    } catch (e) {
+      console.error("⚠️ Supabase 回傳非 JSON：", rawText);
+      await replyToLine(replyToken, "目前資料查詢異常，我們會請專人協助您！");
+      return res.status(200).send("Supabase 非 JSON 錯誤");
+    }
 
-                # 再查 company (FAQ / policy / about)
-                company_rows = query_pgvector(SUPABASE_TABLE_COMPANY, q_vec, limit=5)
-                if company_rows:
-                    context_blocks += [r.get('content','') for r in company_rows]
+    let replyText = "";
+    if (Array.isArray(data) && data.length > 0) {
+      const prompt = `請用繁體中文、客服語氣、字數不超過250字，直接回答使用者查詢條件為 ${JSON.stringify(params)}，以下是結果：\n${JSON.stringify(data)}`;
+      const chatReply = await openai.chat.completions.create({
+        model: "gpt-4o",
+        messages: [
+          { role: "system", content: "你是亞鈺汽車的50年資深客服專員，請用自然、貼近人心的口吻根據資料回覆客戶問題，整體不要超過250字。" },
+          { role: "user", content: prompt }
+        ]
+      });
+      replyText = chatReply.choices[0].message.content.trim();
+    } else {
+      replyText = "目前查無符合條件的資料，您還有其他問題嗎？";
+    }
 
-                if not context_blocks:
-                    fallback = "亞鈺智能客服您好：感謝您的詢問，目前您的問題需要專人回覆您，請稍後馬上有人為您服務！😄"
-                    line_bot_api.reply_message(ReplyMessageRequest(
-                        reply_token=event.reply_token,
-                        messages=[TextMessage(text=fallback)]
-                    ))
-                    return "OK", 200
+    await replyToLine(replyToken, replyText);
+    res.status(200).json({ status: "ok" });
+  } catch (error) {
+    console.error("❌ webhook 錯誤：", error);
+    res.status(200).send("error handled");
+  }
+}
 
-                context = "\n".join(context_blocks[-10:])  # 限制長度
-
-                # GPT 回覆
-                messages = list(user_memory[user_id])
-                system_prompt = { "role": "system", "content": "你是亞鈺汽車客服…" }
-                user_prompt = { "role": "user", "content": f"參考資料：\n{context}\n\n問題：{query}" }
-                completion = openai_client.chat.completions.create(
-                    model="gpt-4o",
-                    messages=[system_prompt] + messages + [user_prompt]
-                )
-                answer = completion.choices[0].message.content.strip()
-                if not answer.startswith("亞鈺智能客服您好："):
-                    answer = "亞鈺智能客服您好：" + answer
-
-                user_memory[user_id].append({ "role": "assistant", "content": answer })
-                line_bot_api.reply_message(ReplyMessageRequest(
-                    reply_token=event.reply_token,
-                    messages=[TextMessage(text=answer)]
-                ))
-    return "OK", 200
-
-
-@app.route("/")
-def home():
-    return "Supabase‑only LINE GPT Bot Ready"
-
-
-if __name__ == "__main__":
-    app.run(host="0.0.0.0", port=8000)
+async function replyToLine(replyToken, text) {
+  await fetch("https://api.line.me/v2/bot/message/reply", {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${process.env.LINE_TOKEN}`,
+      "Content-Type": "application/json"
+    },
+    body: JSON.stringify({
+      replyToken,
+      messages: [{ type: "text", text }]
+    })
+  });
+}
