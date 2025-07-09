@@ -1,21 +1,16 @@
 import os
 import json
-from flask import Flask, request
 from dotenv import load_dotenv
 from linebot.v3.messaging import Configuration, ApiClient, MessagingApi, ReplyMessageRequest, TextMessage
 from supabase import create_client
 import openai
 
-# 載入環境變數
 load_dotenv()
 config = Configuration(access_token=os.getenv("LINE_CHANNEL_ACCESS_TOKEN"))
 line_bot_api = MessagingApi(ApiClient(config))
 openai.api_key = os.getenv("OPENAI_API_KEY")
 supabase = create_client(os.getenv("SUPABASE_URL"), os.getenv("SUPABASE_SERVICE_ROLE_KEY"))
 
-app = Flask(__name__)
-
-# 你的資料表/欄位設計
 TABLES = {
     "cars": ["廠牌", "車型", "年式", "保固內容", "五日鑑賞", "車輛售價", "里程"],
     "company": ["公司名稱", "地址", "營業時間", "聯絡電話"]
@@ -54,23 +49,29 @@ def query_supabase(parse):
             return f"{field}：{value}"
         return "查無資料"
 
-@app.route("/api/webhook", methods=["POST"])
-def callback():
-    body = request.get_json()
-    events = body.get("events", [])
-    for event in events:
-        if event.get("type") == "message" and event["message"].get("type") == "text":
-            user_text = event["message"]["text"]
-            reply_token = event["replyToken"]
-            parse = gpt_parse_question(user_text)
-            reply = query_supabase(parse) or "感謝您的詢問，請詢問亞鈺汽車相關問題，我們很高興為您服務！😄"
-            line_bot_api.reply_message(
-                ReplyMessageRequest(
-                    reply_token=reply_token,
-                    messages=[TextMessage(text=reply)]
+def handler(request):
+    try:
+        body = request.body.decode()
+        payload = json.loads(body)
+        events = payload.get("events", [])
+        for event in events:
+            if event.get("type") == "message" and event["message"].get("type") == "text":
+                user_text = event["message"]["text"]
+                reply_token = event["replyToken"]
+                parse = gpt_parse_question(user_text)
+                reply = query_supabase(parse) or "感謝您的詢問，請詢問亞鈺汽車相關問題，我們很高興為您服務！😄"
+                line_bot_api.reply_message(
+                    ReplyMessageRequest(
+                        reply_token=reply_token,
+                        messages=[TextMessage(text=reply)]
+                    )
                 )
-            )
-    return "OK"
-
-if __name__ == "__main__":
-    app.run(port=3000)
+        return {
+            "statusCode": 200,
+            "body": "OK"
+        }
+    except Exception as e:
+        return {
+            "statusCode": 500,
+            "body": str(e)
+        }
