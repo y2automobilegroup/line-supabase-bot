@@ -6,20 +6,21 @@ from linebot.v3.messaging import Configuration, ApiClient, MessagingApi, ReplyMe
 from supabase import create_client
 import openai
 
-# 1. 載入環境變數
+# 載入環境變數
 load_dotenv()
 config = Configuration(access_token=os.getenv("LINE_CHANNEL_ACCESS_TOKEN"))
 line_bot_api = MessagingApi(ApiClient(config))
 openai.api_key = os.getenv("OPENAI_API_KEY")
 supabase = create_client(os.getenv("SUPABASE_URL"), os.getenv("SUPABASE_SERVICE_ROLE_KEY"))
 
-# 2. 欄位定義
+app = Flask(__name__)
+
+# 你的資料表/欄位設計
 TABLES = {
     "cars": ["廠牌", "車型", "年式", "保固內容", "五日鑑賞", "車輛售價", "里程"],
     "company": ["公司名稱", "地址", "營業時間", "聯絡電話"]
 }
 
-# 3. GPT 拆解問題
 def gpt_parse_question(user_text):
     prompt = f"""
 你有兩個表單：
@@ -38,7 +39,6 @@ def gpt_parse_question(user_text):
     except:
         return {}
 
-# 4. 查 Supabase
 def query_supabase(parse):
     table, field, keyword, action = parse.get('table'), parse.get('field'), parse.get('keyword'), parse.get('action')
     if not table or not field or not keyword:
@@ -53,9 +53,6 @@ def query_supabase(parse):
             value = res.data[0].get(field, "")
             return f"{field}：{value}"
         return "查無資料"
-
-# 5. Webhook
-app = Flask(__name__)
 
 @app.route("/api/webhook", methods=["POST"])
 def callback():
