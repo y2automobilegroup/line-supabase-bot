@@ -2,11 +2,11 @@
   "name": "line-supabase-bot",
   "version": "1.0.0",
   "description": "亞鈺汽車 LINE GPT 智能客服機器人",
-  "main": "api/webhook.js",
+  "main": "api/webhook.py",
   "type": "module",
   "scripts": {
     "dev": "vercel dev",
-    "start": "node api/webhook.js"
+    "start": "node api/webhook.py"
   },
   "dependencies": {
     "axios": "^1.6.0",
