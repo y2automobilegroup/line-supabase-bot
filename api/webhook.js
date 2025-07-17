@@ -2,11 +2,12 @@ import OpenAI from "openai";
 import fetch from "node-fetch";
 import { Pinecone } from "@pinecone-database/pinecone";
 
+const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
 const pinecone = new Pinecone({
   apiKey: process.env.PINECONE_API_KEY,
   environment: process.env.PINECONE_ENVIRONMENT
 });
-const pinecone = new Pinecone({ apiKey: process.env.PINECONE_API_KEY });
+
 const memory = {};
 const topicMemory = {};
 
@@ -99,7 +100,7 @@ export default async function handler(req, res) {
     let data = [];
     let replyText = "";
 
-    // 🔍 Step 1: try Pinecone (semantic search for everything)
+    // Step 1: try Pinecone (semantic search for company and cars)
     const queryVector = await openai.embeddings.create({
       model: "text-embedding-3-small",
       input: userText
@@ -126,7 +127,7 @@ export default async function handler(req, res) {
       });
       replyText = response.choices[0].message.content.trim();
     } else {
-      // Step 2: fallback Supabase for cars only
+      // Step 2: fallback Supabase if Pinecone 無結果
       if (category === "cars") {
         const query = Object.entries(params || {})
           .map(([key, value]) => {
@@ -148,22 +149,20 @@ export default async function handler(req, res) {
         try {
           data = await resp.json();
         } catch (e) {}
+      }
 
-        if (Array.isArray(data) && data.length > 0) {
-          const prompt = `請用繁體中文、客服語氣、字數不超過250字，直接回答使用者查詢條件為 ${JSON.stringify(params)}，以下是結果：\n${JSON.stringify(data)}`;
-          const chatReply = await openai.chat.completions.create({
-            model: "gpt-4o",
-            messages: [
-              { role: "system", content: "你是亞鈺汽車的客服專員，請根據以下內容精準回覆客戶問題：" },
-              { role: "user", content: prompt }
-            ]
-          });
-          replyText = chatReply.choices[0].message.content.trim();
-        } else {
-          replyText = "目前查無符合條件的資料，您還有其他問題嗎？";
-        }
+      if (Array.isArray(data) && data.length > 0) {
+        const prompt = `請用繁體中文、客服語氣、字數不超過250字，直接回答使用者查詢條件為 ${JSON.stringify(params)}，以下是結果：\n${JSON.stringify(data)}`;
+        const chatReply = await openai.chat.completions.create({
+          model: "gpt-4o",
+          messages: [
+            { role: "system", content: "你是亞鈺汽車的客服專員，請根據以下內容精準回覆客戶問題：" },
+            { role: "user", content: prompt }
+          ]
+        });
+        replyText = chatReply.choices[0].message.content.trim();
       } else {
-        replyText = followup || "請詢問亞鈺汽車相關問題，謝謝！";
+        replyText = "目前查無符合條件的資料，您還有其他問題嗎？";
       }
     }
 
