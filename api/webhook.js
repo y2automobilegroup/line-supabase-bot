@@ -1,4 +1,3 @@
-
 import OpenAI from "openai";
 import fetch from "node-fetch";
 
@@ -74,7 +73,7 @@ export default async function handler(req, res) {
       messages: [
         {
           role: "system",
-          content: \`你是亞鈺汽車的客服助手，請用以下 JSON 結構分析使用者訊息，並只回傳該 JSON：
+          content: `你是亞鈺汽車的客服助手，請用以下 JSON 結構分析使用者訊息，並只回傳該 JSON：
 {
   "category": "cars" | "company" | "other",
   "params": { ... },
@@ -84,7 +83,7 @@ export default async function handler(req, res) {
 規則如下：
 1. category 為 cars 時，params 會包含車輛查詢條件（如：物件編號、廠牌、車型、年份、價格等）。
 2. category 為 company 時，params 為使用者問的關鍵字（如：保固、地址、營業時間等）
-3. 若無法判斷，請回傳 { "category": "other", "params": {}, "followup": "請詢問亞鈺汽車相關問題，謝謝！" }\`
+3. 若無法判斷，請回傳 { "category": "other", "params": {}, "followup": "請詢問亞鈺汽車相關問題，謝謝！" }`
         },
         ...contextMessages,
         { role: "user", content: userText }
@@ -93,7 +92,7 @@ export default async function handler(req, res) {
 
     let result;
     try {
-      result = JSON.parse(gpt.choices[0].message.content.trim().replace(/^\\`\\`\\`json\n?|\n?\\`\\`\\`$/g, ""));
+      result = JSON.parse(gpt.choices[0].message.content.trim().replace(/^```json\n?|\n?```$/g, ""));
     } catch (e) {
       await replyToLine(replyToken, "不好意思，請再試一次，我們會請專人協助您！");
       return res.status(200).send("GPT JSON parse error");
@@ -117,40 +116,43 @@ export default async function handler(req, res) {
       return res.status(200).send("Irrelevant message");
     }
 
-    const table = category === "cars" ? "cars" : "company";
-    const query = Object.entries(params || {})
-      .map(([key, value]) => {
-        if (typeof value === "object") {
-          if (value.gte !== undefined) return \`\${key}=gte.\${parsePrice(value.gte)}\`;
-          if (value.lte !== undefined) return \`\${key}=lte.\${parsePrice(value.lte)}\`;
-          if (value.eq !== undefined) return \`\${key}=eq.\${parsePrice(value.eq)}\`;
+    const tables = category === "cars" ? ["company", "cars"] : ["company"];
+    let data = [];
+
+    for (const table of tables) {
+      const query = Object.entries(params || {})
+        .map(([key, value]) => {
+          if (typeof value === "object") {
+            if (value.gte !== undefined) return `${key}=gte.${parsePrice(value.gte)}`;
+            if (value.lte !== undefined) return `${key}=lte.${parsePrice(value.lte)}`;
+            if (value.eq !== undefined) return `${key}=eq.${parsePrice(value.eq)}`;
+          }
+          return `${key}=ilike.%${value}%`;
+        })
+        .join("&");
+
+      const url = `${process.env.SUPABASE_URL}/rest/v1/${table}?select=*&${query}`;
+      console.log("🚀 查詢 Supabase URL:", url);
+      const resp = await fetch(url, {
+        headers: {
+          apikey: process.env.SUPABASE_KEY,
+          Authorization: `Bearer ${process.env.SUPABASE_KEY}`
         }
-        return \`\${key}=ilike.%\${value}%\`;
-      })
-      .join("&");
+      });
 
-    const url = \`\${process.env.SUPABASE_URL}/rest/v1/\${table}?select=*&\${query}\`;
-    console.log("🚀 查詢 Supabase URL:", url);
-    const resp = await fetch(url, {
-      headers: {
-        apikey: process.env.SUPABASE_KEY,
-        Authorization: \`Bearer \${process.env.SUPABASE_KEY}\`
+      const rawText = await resp.text();
+      try {
+        data = JSON.parse(rawText);
+      } catch (e) {
+        console.error("⚠️ Supabase 回傳非 JSON：", rawText);
       }
-    });
 
-    const rawText = await resp.text();
-    let data;
-    try {
-      data = JSON.parse(rawText);
-    } catch (e) {
-      console.error("⚠️ Supabase 回傳非 JSON：", rawText);
-      await replyToLine(replyToken, "目前資料查詢異常，我們會請專人協助您！");
-      return res.status(200).send("Supabase 非 JSON 錯誤");
+      if (Array.isArray(data) && data.length > 0) break;
     }
 
     let replyText = "";
     if (Array.isArray(data) && data.length > 0) {
-      const prompt = \`請用繁體中文、客服語氣、字數不超過250字，直接回答使用者查詢條件為 \${JSON.stringify(params)}，以下是結果：\n\${JSON.stringify(data)}\`;
+      const prompt = `請用繁體中文、客服語氣、字數不超過250字，直接回答使用者查詢條件為 ${JSON.stringify(params)}，以下是結果：\n${JSON.stringify(data)}`;
       const chatReply = await openai.chat.completions.create({
         model: "gpt-4o",
         messages: [
@@ -175,7 +177,7 @@ async function replyToLine(replyToken, text) {
   await fetch("https://api.line.me/v2/bot/message/reply", {
     method: "POST",
     headers: {
-      Authorization: \`Bearer \${process.env.LINE_TOKEN}\`,
+      Authorization: `Bearer ${process.env.LINE_TOKEN}`,
       "Content-Type": "application/json"
     },
     body: JSON.stringify({
