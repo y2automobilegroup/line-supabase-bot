@@ -8,16 +8,32 @@ const topicMemory = {};
 
 const parsePrice = val => {
   if (typeof val !== "string") return val;
-  const chineseNumMap = { "零": 0, "一": 1, "二": 2, "兩": 2, "三": 3, "四": 4, "五": 5, "六": 6, "七": 7, "八": 8, "九": 9 };
-  const chineseUnitMap = { "十": 10, "百": 100, "千": 1000, "萬": 10000 };
+
+  const chineseNumMap = {
+    "零": 0, "一": 1, "二": 2, "兩": 2, "三": 3, "四": 4,
+    "五": 5, "六": 6, "七": 7, "八": 8, "九": 9
+  };
+
+  const chineseUnitMap = {
+    "十": 10,
+    "百": 100,
+    "千": 1000,
+    "萬": 10000
+  };
+
   const parseChineseNumber = str => {
-    let total = 0, unit = 1, num = 0;
+    let total = 0;
+    let unit = 1;
+    let num = 0;
+
     for (let i = str.length - 1; i >= 0; i--) {
       const char = str[i];
       if (chineseUnitMap[char]) {
         unit = chineseUnitMap[char];
         if (num === 0) num = 1;
-        total += num * unit; num = 0; unit = 1;
+        total += num * unit;
+        num = 0;
+        unit = 1;
       } else if (chineseNumMap[char] !== undefined) {
         num = chineseNumMap[char];
       } else if (!isNaN(Number(char))) {
@@ -27,30 +43,49 @@ const parsePrice = val => {
     total += num;
     return total;
   };
+
   const cleaned = val.replace(/[元台幣\s]/g, "").trim();
   if (cleaned.includes("萬")) {
     const numericPart = cleaned.replace("萬", "").trim();
-    if (!isNaN(Number(numericPart))) return Math.round(parseFloat(numericPart) * 10000);
+    if (!isNaN(Number(numericPart))) {
+      return Math.round(parseFloat(numericPart) * 10000);
+    }
     return parseChineseNumber(numericPart) * 10000;
   }
+
   return isNaN(Number(cleaned)) ? val : Number(cleaned);
 };
 
 export default async function handler(req, res) {
   try {
     if (req.method !== "POST") return res.status(405).end("Only POST allowed");
+
     const body = req.body;
     const event = body.events?.[0];
     const userText = event?.message?.text;
     const replyToken = event?.replyToken;
     const userId = event?.source?.userId;
+
     if (!userText || !replyToken) return res.status(200).send("Invalid message");
 
     const contextMessages = memory[userId]?.map(text => ({ role: "user", content: text })) || [];
     const gpt = await openai.chat.completions.create({
       model: "gpt-4o",
       messages: [
-        { role: "system", content: \`你是亞鈺汽車的客服助手，請用以下 JSON 結構分析使用者訊息，並只回傳該 JSON：{"category": "cars" | "company" | "other","params": { ... },"followup": "..."} 規則如下：1. category 為 cars 時，params 會包含車輛查詢條件；2. category 為 company 時，params 為使用者問的關鍵字；3. 無法判斷時請回傳 {"category": "other","params": {},"followup": "請詢問亞鈺汽車相關問題，謝謝！"}\` },
+        {
+          role: "system",
+          content: \`你是亞鈺汽車的客服助手，請用以下 JSON 結構分析使用者訊息，並只回傳該 JSON：
+{
+  "category": "cars" | "company" | "other",
+  "params": { ... },
+  "followup": "..."
+}
+
+規則如下：
+1. category 為 cars 時，params 會包含車輛查詢條件（如：物件編號、廠牌、車型、年份、價格等）。
+2. category 為 company 時，params 為使用者問的關鍵字（如：保固、地址、營業時間等）
+3. 若無法判斷，請回傳 { "category": "other", "params": {}, "followup": "請詢問亞鈺汽車相關問題，謝謝！" }\`
+        },
         ...contextMessages,
         { role: "user", content: userText }
       ]
@@ -59,7 +94,7 @@ export default async function handler(req, res) {
     let result;
     try {
       result = JSON.parse(gpt.choices[0].message.content.trim().replace(/^\\`\\`\\`json\n?|\n?\\`\\`\\`$/g, ""));
-    } catch {
+    } catch (e) {
       await replyToLine(replyToken, "不好意思，請再試一次，我們會請專人協助您！");
       return res.status(200).send("GPT JSON parse error");
     }
@@ -68,6 +103,7 @@ export default async function handler(req, res) {
     const currentBrand = params?.廠牌;
     const lastParams = topicMemory[userId] || {};
     const lastBrand = lastParams.廠牌;
+
     if (currentBrand && currentBrand !== lastBrand) {
       memory[userId] = [userText];
       topicMemory[userId] = { ...params };
@@ -82,22 +118,32 @@ export default async function handler(req, res) {
     }
 
     const table = category === "cars" ? "cars" : "company";
-    const query = Object.entries(params || {}).map(([key, value]) => {
-      if (typeof value === "object") {
-        if (value.gte !== undefined) return \`\${key}=gte.\${parsePrice(value.gte)}\`;
-        if (value.lte !== undefined) return \`\${key}=lte.\${parsePrice(value.lte)}\`;
-        if (value.eq !== undefined) return \`\${key}=eq.\${parsePrice(value.eq)}\`;
-      }
-      return \`\${key}=ilike.%\${value}%\`;
-    }).join("&");
+    const query = Object.entries(params || {})
+      .map(([key, value]) => {
+        if (typeof value === "object") {
+          if (value.gte !== undefined) return \`\${key}=gte.\${parsePrice(value.gte)}\`;
+          if (value.lte !== undefined) return \`\${key}=lte.\${parsePrice(value.lte)}\`;
+          if (value.eq !== undefined) return \`\${key}=eq.\${parsePrice(value.eq)}\`;
+        }
+        return \`\${key}=ilike.%\${value}%\`;
+      })
+      .join("&");
 
     const url = \`\${process.env.SUPABASE_URL}/rest/v1/\${table}?select=*&\${query}\`;
-    const resp = await fetch(url, { headers: { apikey: process.env.SUPABASE_KEY, Authorization: \`Bearer \${process.env.SUPABASE_KEY}\` } });
+    console.log("🚀 查詢 Supabase URL:", url);
+    const resp = await fetch(url, {
+      headers: {
+        apikey: process.env.SUPABASE_KEY,
+        Authorization: \`Bearer \${process.env.SUPABASE_KEY}\`
+      }
+    });
+
     const rawText = await resp.text();
     let data;
     try {
       data = JSON.parse(rawText);
-    } catch {
+    } catch (e) {
+      console.error("⚠️ Supabase 回傳非 JSON：", rawText);
       await replyToLine(replyToken, "目前資料查詢異常，我們會請專人協助您！");
       return res.status(200).send("Supabase 非 JSON 錯誤");
     }
@@ -132,6 +178,9 @@ async function replyToLine(replyToken, text) {
       Authorization: \`Bearer \${process.env.LINE_TOKEN}\`,
       "Content-Type": "application/json"
     },
-    body: JSON.stringify({ replyToken, messages: [{ type: "text", text }] })
+    body: JSON.stringify({
+      replyToken,
+      messages: [{ type: "text", text }]
+    })
   });
 }
