@@ -116,10 +116,24 @@ export default async function handler(req, res) {
       return res.status(200).send("Irrelevant message");
     }
 
-    const tables = category === "cars" ? ["company", "cars"] : ["company"];
     let data = [];
-
-    for (const table of tables) {
+    if (category === "company") {
+      const keyword = Object.values(params).join(" ").trim();
+      const url = `${process.env.SUPABASE_URL}/rest/v1/company?select=*&combined_text=ilike.%${encodeURIComponent(keyword)}%`;
+      console.log("🚀 查詢 Supabase URL:", url);
+      const resp = await fetch(url, {
+        headers: {
+          apikey: process.env.SUPABASE_KEY,
+          Authorization: `Bearer ${process.env.SUPABASE_KEY}`
+        }
+      });
+      const rawText = await resp.text();
+      try {
+        data = JSON.parse(rawText);
+      } catch (e) {
+        console.error("⚠️ Supabase 回傳非 JSON：", rawText);
+      }
+    } else if (category === "cars") {
       const query = Object.entries(params || {})
         .map(([key, value]) => {
           if (typeof value === "object") {
@@ -131,7 +145,7 @@ export default async function handler(req, res) {
         })
         .join("&");
 
-      const url = `${process.env.SUPABASE_URL}/rest/v1/${table}?select=*&${query}`;
+      const url = `${process.env.SUPABASE_URL}/rest/v1/cars?select=*&${query}`;
       console.log("🚀 查詢 Supabase URL:", url);
       const resp = await fetch(url, {
         headers: {
@@ -146,8 +160,6 @@ export default async function handler(req, res) {
       } catch (e) {
         console.error("⚠️ Supabase 回傳非 JSON：", rawText);
       }
-
-      if (Array.isArray(data) && data.length > 0) break;
     }
 
     let replyText = "";
