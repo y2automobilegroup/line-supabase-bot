@@ -1,7 +1,9 @@
 {
-  "functions": {
-    "api/webhook.js": {
-      "runtime": "nodejs18.x"
-    }
+  "name": "line-supabase-bot",
+  "version": "1.0.0",
+  "type": "module",
+  "dependencies": {
+    "openai": "^4.0.0",
+    "node-fetch": "^3.3.2"
   }
 }
