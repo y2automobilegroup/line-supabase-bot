@@ -96,7 +96,7 @@ export default async function handler(req, res) {
     let data = [];
     let replyText = "";
 
-    // 🔍 Step 1: try Pinecone (semantic search for company and cars)
+    // 🔍 Step 1: try Pinecone (semantic search for everything)
     const queryVector = await openai.embeddings.create({
       model: "text-embedding-3-small",
       input: userText
@@ -108,8 +108,7 @@ export default async function handler(req, res) {
     const pineconeQuery = await index.query({
       vector,
       topK: 5,
-      includeMetadata: true,
-      namespace: category
+      includeMetadata: true
     });
 
     const matches = pineconeQuery.matches || [];
@@ -124,20 +123,8 @@ export default async function handler(req, res) {
       });
       replyText = response.choices[0].message.content.trim();
     } else {
-      // Step 2: fallback Supabase if Pinecone 無結果
-      if (category === "company") {
-        const keyword = Object.values(params).join(" ").trim();
-        const url = `${process.env.SUPABASE_URL}/rest/v1/company?select=*&combined_text=ilike.%${encodeURIComponent(keyword)}%`;
-        const resp = await fetch(url, {
-          headers: {
-            apikey: process.env.SUPABASE_KEY,
-            Authorization: `Bearer ${process.env.SUPABASE_KEY}`
-          }
-        });
-        try {
-          data = await resp.json();
-        } catch (e) {}
-      } else if (category === "cars") {
+      // Step 2: fallback Supabase for cars only
+      if (category === "cars") {
         const query = Object.entries(params || {})
           .map(([key, value]) => {
             if (typeof value === "object") {
@@ -158,20 +145,22 @@ export default async function handler(req, res) {
         try {
           data = await resp.json();
         } catch (e) {}
-      }
 
-      if (Array.isArray(data) && data.length > 0) {
-        const prompt = `請用繁體中文、客服語氣、字數不超過250字，直接回答使用者查詢條件為 ${JSON.stringify(params)}，以下是結果：\n${JSON.stringify(data)}`;
-        const chatReply = await openai.chat.completions.create({
-          model: "gpt-4o",
-          messages: [
-            { role: "system", content: "你是亞鈺汽車的客服專員，請根據以下內容精準回覆客戶問題：" },
-            { role: "user", content: prompt }
-          ]
-        });
-        replyText = chatReply.choices[0].message.content.trim();
+        if (Array.isArray(data) && data.length > 0) {
+          const prompt = `請用繁體中文、客服語氣、字數不超過250字，直接回答使用者查詢條件為 ${JSON.stringify(params)}，以下是結果：\n${JSON.stringify(data)}`;
+          const chatReply = await openai.chat.completions.create({
+            model: "gpt-4o",
+            messages: [
+              { role: "system", content: "你是亞鈺汽車的客服專員，請根據以下內容精準回覆客戶問題：" },
+              { role: "user", content: prompt }
+            ]
+          });
+          replyText = chatReply.choices[0].message.content.trim();
+        } else {
+          replyText = "目前查無符合條件的資料，您還有其他問題嗎？";
+        }
       } else {
-        replyText = "目前查無符合條件的資料，您還有其他問題嗎？";
+        replyText = followup || "請詢問亞鈺汽車相關問題，謝謝！";
       }
     }
 
