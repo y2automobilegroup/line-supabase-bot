@@ -1,10 +1,9 @@
 import OpenAI from "openai";
 import fetch from "node-fetch";
 import { Pinecone } from "@pinecone-database/pinecone";
-const test = await pinecone.listIndexes();
-console.log("✅ 已連上 Pinecone，索引列表：", test);
 
-const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
+
+const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY});
 const pinecone = new Pinecone({
   apiKey: process.env.PINECONE_API_KEY,
   environment: process.env.PINECONE_ENVIRONMENT
