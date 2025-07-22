@@ -1,12 +1,7 @@
 import OpenAI from "openai";
 import fetch from "node-fetch";
-import { Pinecone } from "@pinecone-database/pinecone";
 
 const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
-const pinecone = new Pinecone({
-  apiKey: process.env.PINECONE_API_KEY,
-  environment: process.env.PINECONE_ENVIRONMENT
-});
 
 const memory = {};
 const topicMemory = {};
@@ -129,35 +124,7 @@ export default async function handler(req, res) {
 
     let replyText = "";
 
-    try {
-      const queryVector = await openai.embeddings.create({
-        model: "text-embedding-3-small",
-        input: userText
-      });
-      const vector = queryVector.data[0].embedding;
-      const index = pinecone.index(process.env.PINECONE_INDEX);
-      const pineconeQuery = await index.query({
-        vector,
-        topK: 5,
-        includeMetadata: true
-      });
-      const matches = pineconeQuery.matches || [];
-      if (matches.length > 0) {
-        const context = matches.map(m => m.metadata.text).join("\n\n");
-        const response = await openai.chat.completions.create({
-          model: "gpt-4o",
-          messages: [
-            { role: "system", content: "你是亞鈺汽車的客服專員，請根據以下資料回覆使用者問題。" },
-            { role: "user", content: `使用者問題：${userText}\n\n資料如下：\n${context}` }
-          ]
-        });
-        replyText = response.choices[0].message.content.trim();
-      }
-    } catch (e) {
-      console.error("Pinecone search failed:", e);
-    }
-
-    if (!replyText && (category === "cars" || category === "company")) {
+    if (category === "cars" || category === "company") {
       const data = await querySupabaseByParams(params);
       if (Array.isArray(data) && data.length > 0) {
         const prompt = `請用繁體中文、客服語氣、字數不超過250字，直接回答使用者查詢條件為 ${JSON.stringify(params)}，以下是結果：\n${JSON.stringify(data)}`;
