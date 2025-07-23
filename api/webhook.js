@@ -83,7 +83,7 @@ async function querySupabaseByParams(params = {}) {
       if (value.lte !== undefined) return `${encodeURIComponent(dbField)}=lte.${parsePrice(value.lte)}`;
       if (value.eq !== undefined) return `${encodeURIComponent(dbField)}=eq.${parsePrice(value.eq)}`;
     }
-   return `${encodeURIComponent(dbField)}=ilike.${encodeURIComponent(`%${value}%`)}`;
+  return `${encodeURIComponent(dbField)}=eq.${encodeURIComponent(`*${value}*`)}`;
   }).join("&");
 
   const url = `${process.env.SUPABASE_URL}/rest/v1/cars?select=*&${query}`;
