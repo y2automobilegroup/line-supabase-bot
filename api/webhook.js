@@ -2,16 +2,49 @@ import OpenAI from "openai";
 import fetch from "node-fetch";
 
 const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
-
 const memory = {};
 const topicMemory = {};
 
+const fieldMapping = {
+  "物件編號": "vehicle_id",
+  "廠牌": "brand",
+  "車款": "series",
+  "車型": "model",
+  "年式": "model_year",
+  "年份": "year",
+  "變速系統": "transmission",
+  "車門數": "door_count",
+  "驅動方式": "drivetrain",
+  "引擎燃料": "fuel_type",
+  "乘客數": "passenger_count",
+  "排氣量": "engine_capacity",
+  "顏色": "color",
+  "安全性配備": "safety_features",
+  "舒適性配備": "comfort_features",
+  "首次領牌時間": "first_license_date",
+  "行駛里程": "mileage",
+  "車身號碼": "vin",
+  "引擎號碼": "engine_number",
+  "外匯車資料": "import_info",
+  "車輛售價": "price",
+  "車輛賣點": "selling_points",
+  "車輛副標題": "subtitle",
+  "賣家保證": "seller_warranty",
+  "特色說明": "features_description",
+  "影片看車": "video_url",
+  "物件圖片": "image_urls",
+  "聯絡人": "contact_person",
+  "行動電話": "mobile_phone",
+  "賞車地址": "viewing_address",
+  "line": "line_id",
+  "檢測機構": "inspection_org",
+  "查定編號": "inspection_code",
+  "認證書": "certificate"
+};
+
 const parsePrice = val => {
   if (typeof val !== "string") return val;
-  const chineseNumMap = {
-    "零": 0, "一": 1, "二": 2, "兩": 2, "三": 3, "四": 4,
-    "五": 5, "六": 6, "七": 7, "八": 8, "九": 9
-  };
+  const chineseNumMap = { "零": 0, "一": 1, "二": 2, "兩": 2, "三": 3, "四": 4, "五": 5, "六": 6, "七": 7, "八": 8, "九": 9 };
   const chineseUnitMap = { "十": 10, "百": 100, "千": 1000, "萬": 10000 };
   const parseChineseNumber = str => {
     let total = 0, unit = 1, num = 0;
@@ -43,15 +76,15 @@ const parsePrice = val => {
 };
 
 async function querySupabaseByParams(params = {}) {
-  const query = Object.entries(params)
-    .map(([key, value]) => {
-      if (typeof value === "object") {
-        if (value.gte !== undefined) return `${encodeURIComponent(key)}=gte.${parsePrice(value.gte)}`;
-        if (value.lte !== undefined) return `${encodeURIComponent(key)}=lte.${parsePrice(value.lte)}`;
-        if (value.eq !== undefined) return `${encodeURIComponent(key)}=eq.${parsePrice(value.eq)}`;
-      }
-      return `${encodeURIComponent(key)}=ilike.%${encodeURIComponent(value)}%`;
-    }).join("&");
+  const query = Object.entries(params).map(([key, value]) => {
+    const dbField = fieldMapping[key] || key;
+    if (typeof value === "object") {
+      if (value.gte !== undefined) return `${encodeURIComponent(dbField)}=gte.${parsePrice(value.gte)}`;
+      if (value.lte !== undefined) return `${encodeURIComponent(dbField)}=lte.${parsePrice(value.lte)}`;
+      if (value.eq !== undefined) return `${encodeURIComponent(dbField)}=eq.${parsePrice(value.eq)}`;
+    }
+    return `${encodeURIComponent(dbField)}=ilike.%${encodeURIComponent(value)}%`;
+  }).join("&");
 
   const url = `${process.env.SUPABASE_URL}/rest/v1/cars?select=*&${query}`;
   console.log("🚀 查詢 Supabase URL:", url);
