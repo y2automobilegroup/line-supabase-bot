@@ -5,45 +5,6 @@ const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
 const memory = {};
 const topicMemory = {};
 
-// 列名中英文映射
-const columnMapping = {
-  "物件編號": "item_id",
-  "廠牌": "brand",
-  "車款": "model",
-  "車型": "car_type",
-  "年式": "model_year",
-  "年份": "manufacture_year",
-  "變速系統": "transmission",
-  "車門數": "doors",
-  "驅動方式": "drive_type",
-  "引擎燃料": "fuel_type",
-  "乘客數": "passengers",
-  "排氣量": "engine_cc",
-  "顏色": "color",
-  "安全性配備": "safety_features",
-  "舒適性配備": "comfort_features",
-  "首次領牌時間": "first_registration",
-  "行駛里程": "mileage",
-  "車身號碼": "vin",
-  "引擎號碼": "engine_no",
-  "外匯車資料": "import_info",
-  "車輛售價": "price",
-  "車輛賣點": "selling_points",
-  "車輛副標題": "subtitle",
-  "賣家保證": "warranty",
-  "特色說明": "features",
-  "影片看車": "video_url",
-  "物件圖片": "images",
-  "聯絡人": "contact",
-  "行動電話": "phone",
-  "賞車地址": "address",
-  "line": "line_id",
-  "檢測機構": "inspection_org",
-  "查定編號": "inspection_no",
-  "認證書": "certification"
-};
-
-// 價格解析器（支援中文數字）
 const parsePrice = val => {
   if (typeof val !== "string") return val;
 
@@ -53,11 +14,17 @@ const parsePrice = val => {
   };
 
   const chineseUnitMap = {
-    "十": 10, "百": 100, "千": 1000, "萬": 10000, "億": 100000000
+    "十": 10,
+    "百": 100,
+    "千": 1000,
+    "萬": 10000
   };
 
   const parseChineseNumber = str => {
-    let total = 0, unit = 1, num = 0;
+    let total = 0;
+    let unit = 1;
+    let num = 0;
+
     for (let i = str.length - 1; i >= 0; i--) {
       const char = str[i];
       if (chineseUnitMap[char]) {
@@ -65,217 +32,157 @@ const parsePrice = val => {
         if (num === 0) num = 1;
         total += num * unit;
         num = 0;
+        unit = 1;
       } else if (chineseNumMap[char] !== undefined) {
         num = chineseNumMap[char];
       } else if (!isNaN(Number(char))) {
         num = Number(char);
       }
     }
-    return total + num;
+    total += num;
+    return total;
   };
 
-  const cleaned = val.replace(/[元台幣\s,]/g, "").trim();
+  const cleaned = val.replace(/[元台幣\s]/g, "").trim();
   if (cleaned.includes("萬")) {
-    const numericPart = cleaned.replace("萬", "");
-    return parseFloat(numericPart) * 10000;
-  }
-  if (cleaned.includes("億")) {
-    const numericPart = cleaned.replace("億", "");
-    return parseFloat(numericPart) * 100000000;
-  }
-  return isNaN(Number(cleaned)) ? parseChineseNumber(cleaned) : Number(cleaned);
-};
-
-// 安全查詢建構器
-const buildSupabaseQuery = (table, params) => {
-  const queryParams = new URLSearchParams();
-  queryParams.append('select', '*');
-
-  Object.entries(params || {}).forEach(([key, value]) => {
-    const dbKey = columnMapping[key] || key;
-    
-    if (typeof value === 'object') {
-      if (value.gte !== undefined) queryParams.append(dbKey, `gte.${parsePrice(value.gte)}`);
-      if (value.lte !== undefined) queryParams.append(dbKey, `lte.${parsePrice(value.lte)}`);
-      if (value.eq !== undefined) queryParams.append(dbKey, `eq.${parsePrice(value.eq)}`);
-    } else if (value !== undefined && value !== null && value !== '') {
-      queryParams.append(dbKey, `ilike.%${value}%`);
+    const numericPart = cleaned.replace("萬", "").trim();
+    if (!isNaN(Number(numericPart))) {
+      return Math.round(parseFloat(numericPart) * 10000);
     }
-  });
-
-  return `${process.env.SUPABASE_URL}/rest/v1/${table}?${queryParams.toString()}`;
-};
-
-// 強化錯誤處理的資料獲取
-const fetchFromSupabase = async (url) => {
-  try {
-    const startTime = Date.now();
-    const resp = await fetch(url, {
-      headers: {
-        apikey: process.env.SUPABASE_KEY,
-        Authorization: `Bearer ${process.env.SUPABASE_KEY}`,
-        'Content-Type': 'application/json'
-      },
-      timeout: 10000 // 10秒超時
-    });
-
-    if (!resp.ok) {
-      const errorText = await resp.text();
-      throw new Error(`HTTP ${resp.status}: ${errorText.slice(0, 200)}`);
-    }
-
-    const data = await resp.json();
-    console.log(`✅ 成功查詢 ${url} (${Date.now() - startTime}ms)`);
-    return Array.isArray(data) ? data : [];
-  } catch (error) {
-    console.error(`❌ 查詢失敗 ${url}:`, error.message);
-    return null;
+    return parseChineseNumber(numericPart) * 10000;
   }
-};
 
-// LINE 回覆函數
-const replyToLine = async (replyToken, text) => {
-  try {
-    await fetch("https://api.line.me/v2/bot/message/reply", {
-      method: "POST",
-      headers: {
-        Authorization: `Bearer ${process.env.LINE_TOKEN}`,
-        "Content-Type": "application/json"
-      },
-      body: JSON.stringify({
-        replyToken,
-        messages: [{ type: "text", text: text.slice(0, 2000) }] // LINE 限制2000字
-      }),
-      timeout: 5000
-    });
-  } catch (error) {
-    console.error("LINE 回覆失敗:", error);
-  }
+  return isNaN(Number(cleaned)) ? val : Number(cleaned);
 };
 
 export default async function handler(req, res) {
   try {
-    // 基礎驗證
-    if (req.method !== "POST") return res.status(405).json({ error: "僅允許 POST 請求" });
-    
-    const { events } = req.body;
-    const event = events?.[0];
-    if (!event) return res.status(400).json({ error: "無效的事件格式" });
+    if (req.method !== "POST") return res.status(405).end("Only POST allowed");
 
-    const { message, replyToken, source } = event;
-    const userText = message?.text;
-    const userId = source?.userId;
+    const body = req.body;
+    const event = body.events?.[0];
+    const userText = event?.message?.text;
+    const replyToken = event?.replyToken;
+    const userId = event?.source?.userId;
 
-    if (!userText || !replyToken) {
-      return res.status(200).json({ status: "忽略無效訊息" });
-    }
+    if (!userText || !replyToken) return res.status(200).send("Invalid message");
 
-    // 記憶體管理
-    const updateMemory = (params) => {
-      const currentBrand = params?.廠牌;
-      const lastParams = topicMemory[userId] || {};
-
-      if (currentBrand && currentBrand !== lastParams.廠牌) {
-        memory[userId] = [userText];
-        topicMemory[userId] = { ...params };
-      } else {
-        memory[userId] = [...(memory[userId] || []), userText];
-        topicMemory[userId] = { ...lastParams, ...params };
-      }
-    };
-
-    // GPT 分析使用者意圖
-    const contextMessages = memory[userId]?.map(text => ({ 
-      role: "user", 
-      content: text 
-    })) || [];
-
-    const gptResponse = await openai.chat.completions.create({
+    const contextMessages = memory[userId]?.map(text => ({ role: "user", content: text })) || [];
+    const gpt = await openai.chat.completions.create({
       model: "gpt-4o",
       messages: [
         {
           role: "system",
-          content: `（保持原有系統提示）`
+          content: `你是亞鈺汽車的客服助手，請用以下 JSON 結構分析使用者訊息，並只回傳該 JSON：
+{
+  "category": "cars" | "company" | "other",
+  "params": { ... },
+  "followup": "..."
+}
+
+規則如下：
+1. category 為 cars 時，params 會包含車輛查詢條件（如：物件編號、廠牌、車型、年份、價格等）。
+2. category 為 company 時，params 為使用者問的關鍵字（如：保固、地址、營業時間等）
+3. 若無法判斷，請回傳 { "category": "other", "params": {}, "followup": "請詢問亞鈺汽車相關問題，謝謝！" }`
         },
         ...contextMessages,
         { role: "user", content: userText }
-      ],
-      temperature: 0.3,
-      max_tokens: 500
+      ]
     });
 
-    let parsedResult;
+    let result;
     try {
-      const rawContent = gptResponse.choices[0].message.content;
-      parsedResult = JSON.parse(rawContent.trim().replace(/^```json\n?|\n?```$/g, ""));
+      result = JSON.parse(gpt.choices[0].message.content.trim().replace(/^```json\n?|\n?```$/g, ""));
     } catch (e) {
-      await replyToLine(replyToken, "抱歉，解析訊息時發生問題，請換個方式詢問");
-      return res.status(200).json({ error: "GPT 回應解析失敗" });
+      await replyToLine(replyToken, "不好意思，請再試一次，我們會請專人協助您！");
+      return res.status(200).send("GPT JSON parse error");
     }
 
-    const { category, params = {}, followup } = parsedResult;
-    updateMemory(params);
+    const { category, params, followup } = result;
+    const currentBrand = params?.廠牌;
+    const lastParams = topicMemory[userId] || {};
+    const lastBrand = lastParams.廠牌;
 
-    // 處理非車輛相關查詢
+    if (currentBrand && currentBrand !== lastBrand) {
+      memory[userId] = [userText];
+      topicMemory[userId] = { ...params };
+    } else {
+      memory[userId] = [...(memory[userId] || []), userText];
+      topicMemory[userId] = { ...lastParams, ...params };
+    }
+
     if (category === "other") {
-      await replyToLine(replyToken, followup || "請提供更多車輛相關資訊");
-      return res.status(200).json({ status: "非車輛查詢" });
+      await replyToLine(replyToken, followup || "請詢問亞鈺汽車相關問題，謝謝！");
+      return res.status(200).send("Irrelevant message");
     }
 
-    // 查詢 Supabase 資料
-    const tables = category === "cars" ? ["cars", "company"] : ["company"];
-    let responseData = [];
+    const tables = category === "cars" ? ["company", "cars"] : ["company"];
+    let data = [];
 
     for (const table of tables) {
-      const url = buildSupabaseQuery(table, params);
-      console.log("🔍 查詢 URL:", url);
+      const query = Object.entries(params || {})
+        .map(([key, value]) => {
+          if (typeof value === "object") {
+            if (value.gte !== undefined) return `${key}=gte.${parsePrice(value.gte)}`;
+            if (value.lte !== undefined) return `${key}=lte.${parsePrice(value.lte)}`;
+            if (value.eq !== undefined) return `${key}=eq.${parsePrice(value.eq)}`;
+          }
+          return `${key}=ilike.%${value}%`;
+        })
+        .join("&");
 
-      const data = await fetchFromSupabase(url);
-      if (data && data.length > 0) {
-        responseData = data;
-        break;
-      }
-    }
-
-    // 生成回覆
-    let replyText;
-    if (responseData.length > 0) {
-      const prompt = `根據以下查詢條件和結果生成客服回覆：
-條件: ${JSON.stringify(params)}
-結果: ${JSON.stringify(responseData.slice(0, 3))} // 限制資料量
-要求: 用繁體中文、親切口吻、不超過200字、重點突出規格與價格`;
-
-      const gptReply = await openai.chat.completions.create({
-        model: "gpt-4o",
-        messages: [
-          { 
-            role: "system", 
-            content: "你是專業汽車銷售顧問，回覆需包含: 1. 符合條件車款數量 2. 主要規格 3. 價格範圍 4. 邀請進一步洽詢" 
-          },
-          { role: "user", content: prompt }
-        ],
-        temperature: 0.7
+      const url = `${process.env.SUPABASE_URL}/rest/v1/${table}?select=*&${query}`;
+      console.log("🚀 查詢 Supabase URL:", url);
+      const resp = await fetch(url, {
+        headers: {
+          apikey: process.env.SUPABASE_KEY,
+          Authorization: `Bearer ${process.env.SUPABASE_KEY}`
+        }
       });
 
-      replyText = gptReply.choices[0].message.content.trim();
-    } else {
-      replyText = "目前沒有符合條件的車輛，我們可以為您特別尋找，請提供更多需求細節。";
+      const rawText = await resp.text();
+      try {
+        data = JSON.parse(rawText);
+      } catch (e) {
+        console.error("⚠️ Supabase 回傳非 JSON：", rawText);
+      }
+
+      if (Array.isArray(data) && data.length > 0) break;
     }
 
-    // 發送 LINE 回覆
-    await replyToLine(replyToken, replyText);
-    res.status(200).json({ 
-      status: "success",
-      query: params,
-      data_count: responseData.length
-    });
+    let replyText = "";
+    if (Array.isArray(data) && data.length > 0) {
+      const prompt = `請用繁體中文、客服語氣、字數不超過250字，直接回答使用者查詢條件為 ${JSON.stringify(params)}，以下是結果：\n${JSON.stringify(data)}`;
+      const chatReply = await openai.chat.completions.create({
+        model: "gpt-4o",
+        messages: [
+          { role: "system", content: "你是亞鈺汽車的50年資深客服專員，請用自然、貼近人心的口吻根據資料回覆客戶問題，整體不要超過250字。" },
+          { role: "user", content: prompt }
+        ]
+      });
+      replyText = chatReply.choices[0].message.content.trim();
+    } else {
+      replyText = "目前查無符合條件的資料，您還有其他問題嗎？";
+    }
 
+    await replyToLine(replyToken, replyText);
+    res.status(200).json({ status: "ok" });
   } catch (error) {
-    console.error("❌ 主處理器錯誤:", error);
-    await replyToLine(replyToken, "系統暫時無法處理您的請求，請稍後再試");
-    res.status(200).json({ 
-      error: "內部伺服器錯誤",
-      details: error.message 
-    });
+    console.error("❌ webhook 錯誤：", error);
+    res.status(200).send("error handled");
   }
+}
+
+async function replyToLine(replyToken, text) {
+  await fetch("https://api.line.me/v2/bot/message/reply", {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${process.env.LINE_TOKEN}`,
+      "Content-Type": "application/json"
+    },
+    body: JSON.stringify({
+      replyToken,
+      messages: [{ type: "text", text }]
+    })
+  });
 }
