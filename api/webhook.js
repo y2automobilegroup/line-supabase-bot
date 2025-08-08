@@ -50,7 +50,6 @@ const parsePrice = (val) => {
 };
 
 export default async function handler(req, res) {
-  // Log the entire request body for debugging
   console.log("📥 Incoming LINE webhook request:", JSON.stringify(req.body, null, 2));
 
   try {
@@ -60,10 +59,8 @@ export default async function handler(req, res) {
     }
 
     const { events } = req.body;
-    // Handle empty or missing events array (LINE may send empty events for webhook verification)
     if (!events || !Array.isArray(events) || events.length === 0) {
       console.warn("⚠️ No events in webhook payload or invalid events array");
-      // Return 200 to satisfy LINE webhook requirements
       return res.status(200).json({ status: "ok", message: "No events to process" });
     }
 
@@ -72,15 +69,12 @@ export default async function handler(req, res) {
     const replyToken = event?.replyToken;
     const userId = event?.source?.userId;
 
-    // Validate required fields
     if (!userText || !replyToken || !userId) {
       console.warn("⚠️ Missing required fields:", { userText, replyToken, userId });
-      // Instead of 400, reply to LINE and return 200 to avoid webhook errors
       await replyToLine(replyToken, "請提供完整的訊息內容，謝謝！");
       return res.status(200).json({ status: "ok", message: "缺少必要欄位，已回覆用戶" });
     }
 
-    // Verify environment variables
     const requiredEnv = ["OPENAI_API_KEY", "SUPABASE_URL", "SUPABASE_KEY", "LINE_TOKEN"];
     const missingEnv = requiredEnv.filter(env => !process.env[env]);
     if (missingEnv.length > 0) {
@@ -89,7 +83,6 @@ export default async function handler(req, res) {
       return res.status(200).json({ status: "ok", message: `缺少環境變數: ${missingEnv.join(", ")}` });
     }
 
-    // Initialize memory
     memory[userId] = memory[userId] || [];
     topicMemory[userId] = topicMemory[userId] || {};
 
@@ -112,10 +105,9 @@ export default async function handler(req, res) {
 
 **規則**：
 1. 若問題與車輛相關，category 設為 "cars"，params 包含對應欄位的查詢條件（如：廠牌、車款、年份、車輛售價等），數值欄位（如車輛售價、年份、行駛里程）可使用範圍查詢（gte、lte、eq）。
-2. 若問題與公司資訊相關（如地址、保固、營業時間），category 設為 "company"，params 包含相關關鍵字。
-3. 若無法判斷，category 設為 "other"，params 為空，followup 設為 "請詢問與亞鈺汽車相關的問題，謝謝！"。
-4. 確保 params 中的鍵名與資料表欄位完全一致，數值欄位（如車輛售價、年份）應為對應格式（如 { "車輛售價": { "lte": 1000000 } }）。
-5. followup 為建議的回覆訊息，保持簡潔且符合客服語氣。`
+2. 若無法判斷，category 設為 "other"，params 為空，followup 設為 "請詢問與亞鈺汽車相關的問題，謝謝！"。
+3. 確保 params 中的鍵名與資料表欄位完全一致，數值欄位（如車輛售價、年份）應為對應格式（如 { "車輛售價": { "lte": 1000000 } }）。
+4. followup 為建議的回覆訊息，保持簡潔且符合客服語氣。`
         },
         ...contextMessages,
         { role: "user", content: userText }
@@ -142,7 +134,6 @@ export default async function handler(req, res) {
     const lastParams = topicMemory[userId];
     const lastBrand = lastParams?.廠牌;
 
-    // Update memory
     if (currentBrand && currentBrand !== lastBrand) {
       memory[userId] = [userText];
       topicMemory[userId] = { ...params };
@@ -157,7 +148,6 @@ export default async function handler(req, res) {
     }
 
     let data = [];
-    const tables = category === "cars" ? ["cars"] : ["company"];
     const validColumns = [
       "物件編號", "廠牌", "車款", "車型", "年式", "年份", "變速系統", "車門數", "驅動方式",
       "引擎燃料", "乘客數", "排氣量", "顏色", "安全性配備", "舒適性配備", "首次領牌時間",
@@ -166,57 +156,59 @@ export default async function handler(req, res) {
       "line", "檢測機構", "查定編號", "認證書"
     ];
 
-    for (const table of tables) {
-      const query = Object.entries(params || {})
-        .filter(([key]) => validColumns.includes(key))
-        .filter(([_, value]) => value !== undefined && value !== null)
-        .map(([key, value]) => {
-          if (typeof value === "object" && value !== null) {
-            if (value.gte !== undefined) return `${key}=gte.${encodeURIComponent(parsePrice(value.gte))}`;
-            if (value.lte !== undefined) return `${key}=lte.${encodeURIComponent(parsePrice(value.lte))}`;
-            if (value.eq !== undefined) return `${key}=eq.${encodeURIComponent(parsePrice(value.eq))}`;
-          }
-          return `${key}=ilike.${encodeURIComponent(`%${value}%`)}`;
-        })
-        .join("&");
+    const query = Object.entries(params || {})
+      .filter(([key]) => validColumns.includes(key))
+      .filter(([_, value]) => value !== undefined && value !== null)
+      .map(([key, value]) => {
+        if (typeof value === "object" && value !== null) {
+          if (value.gte !== undefined) return `${key}=gte.${encodeURIComponent(parsePrice(value.gte))}`;
+          if (value.lte !== undefined) return `${key}=lte.${encodeURIComponent(parsePrice(value.lte))}`;
+          if (value.eq !== undefined) return `${key}=eq.${encodeURIComponent(parsePrice(value.eq))}`;
+        }
+        return `${key}=ilike.${encodeURIComponent(`%${value}%`)}`;
+      })
+      .join("&");
 
-      if (!query) {
-        console.log("無有效查詢參數，跳過查詢");
-        continue;
+    if (!query) {
+      console.log("無有效查詢參數，跳過查詢");
+      await replyToLine(replyToken, "請提供更具體的查詢條件（如廠牌、價格範圍），謝謝！");
+      return res.status(200).json({ status: "ok", message: "無有效查詢參數" });
+    }
+
+    const supabaseUrl = process.env.SUPABASE_URL.replace(/\/+$/, "");
+    const url = `${supabaseUrl}/rest/v1/cars?select=*&${query}`;
+    console.log("🚀 查詢 Supabase URL:", url);
+
+    try {
+      const resp = await fetch(url, {
+        headers: {
+          apikey: process.env.SUPABASE_KEY,
+          Authorization: `Bearer ${process.env.SUPABASE_KEY}`,
+          "Content-Type": "application/json",
+          "Prefer": "return=representation"
+        },
+        signal: AbortSignal.timeout(10000)
+      });
+
+      if (!resp.ok) {
+        const errorText = await resp.text();
+        console.error(`Supabase 錯誤: ${resp.status} ${resp.statusText}`, errorText);
+        await replyToLine(replyToken, "目前無法查詢車輛資料，請稍後再試或聯繫我們！");
+        return res.status(200).json({ status: "ok", message: `Supabase 查詢失敗: ${errorText}` });
       }
 
-      const url = `${process.env.SUPABASE_URL}/rest/v1/${table}?select=*&${query}`;
-      console.log("🚀 查詢 Supabase URL:", url);
-
+      const rawText = await resp.text();
       try {
-        const resp = await fetch(url, {
-          headers: {
-            apikey: process.env.SUPABASE_KEY,
-            Authorization: `Bearer ${process.env.SUPABASE_KEY}`,
-            "Content-Type": "application/json",
-            "Prefer": "return=representation"
-          },
-          signal: AbortSignal.timeout(10000)
-        });
-
-        if (!resp.ok) {
-          console.error(`Supabase 錯誤: ${resp.status} ${resp.statusText}`);
-          continue;
-        }
-
-        const rawText = await resp.text();
-        try {
-          data = JSON.parse(rawText);
-        } catch (e) {
-          console.error("⚠️ Supabase 回傳非 JSON：", rawText);
-          continue;
-        }
-
-        if (Array.isArray(data) && data.length > 0) break;
+        data = JSON.parse(rawText);
       } catch (e) {
-        console.error(`Supabase 查詢錯誤 (${table}):`, e.message);
-        continue;
+        console.error("⚠️ Supabase 回傳非 JSON：", rawText);
+        await replyToLine(replyToken, "目前無法查詢車輛資料，請稍後再試或聯繫我們！");
+        return res.status(200).json({ status: "ok", message: "Supabase 回傳非 JSON" });
       }
+    } catch (e) {
+      console.error("Supabase 查詢錯誤 (cars):", e.message);
+      await replyToLine(replyToken, "目前無法查詢車輛資料，請稍後再試或聯繫我們！");
+      return res.status(200).json({ status: "ok", message: `Supabase 查詢錯誤: ${e.message}` });
     }
 
     let replyText = "";
@@ -247,7 +239,6 @@ export default async function handler(req, res) {
     if (replyToken) {
       await replyToLine(replyToken, "系統發生錯誤，請稍後再試！");
     }
-    // Always return 200 to LINE to avoid webhook deactivation
     return res.status(200).json({ status: "ok", message: `內部錯誤: ${error.message}` });
   }
 }
@@ -273,7 +264,8 @@ async function replyToLine(replyToken, text) {
     });
 
     if (!response.ok) {
-      console.error(`LINE API 錯誤: ${response.status} ${response.statusText}`);
+      const errorText = await response.text();
+      console.error(`LINE API 錯誤: ${response.status} ${response.statusText}`, errorText);
     }
   } catch (error) {
     console.error("LINE 回覆錯誤:", error.message);
