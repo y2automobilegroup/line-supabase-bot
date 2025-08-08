@@ -45,16 +45,21 @@ const delay = (ms) => new Promise(resolve => setTimeout(resolve, ms));
 export default async function handler(req, res) {
   console.log("📥 Incoming LINE webhook request:", JSON.stringify(req.body, null, 2));
 
+  // 確保總是返回 200，無論是否異常
+  res.status(200).json({ status: "ok" });
+
   try {
     if (req.method !== "POST") {
       console.warn("⚠️ Non-POST request received:", req.method);
-      return res.status(405).json({ error: "Method Not Allowed", message: "僅允許 POST 請求" });
+      await replyToLine(req.body.events?.[0]?.replyToken, "僅允許 POST 請求，謝謝！");
+      return;
     }
 
     const { events } = req.body;
     if (!events || !Array.isArray(events) || events.length === 0) {
       console.warn("⚠️ No events in webhook payload or invalid events array");
-      return res.status(200).json({ status: "ok", message: "No events to process" });
+      await replyToLine(req.body.events?.[0]?.replyToken, "無有效事件，謝謝！");
+      return;
     }
 
     const event = events[0];
@@ -65,26 +70,23 @@ export default async function handler(req, res) {
     if (!userText || !replyToken || !userId) {
       console.warn("⚠️ Missing required fields:", { userText, replyToken, userId });
       await replyToLine(replyToken, "請提供完整的訊息內容，謝謝！");
-      return res.status(200).json({ status: "ok", message: "缺少必要欄位，已回覆用戶" });
+      return;
     }
 
     const requiredEnv = ["OPENAI_API_KEY", "SUPABASE_URL", "SUPABASE_KEY", "LINE_TOKEN"];
     const missingEnv = requiredEnv.filter(env => !process.env[env]);
     if (missingEnv.length > 0) {
       console.error(`缺少環境變數: ${missingEnv.join(", ")}`);
-      await replyToLine(replyToken, "系統發生錯誤，請稍後再試！");
-      return res.status(200).json({ status: "ok", message: `缺少環境變數: ${missingEnv.join(", ")}` });
+      await replyToLine(replyToken, "系統發生錯誤，請稍後再試或聯繫我們！");
+      return;
     }
 
-    // 初始化或更新記憶
     memory[userId] = memory[userId] || [];
     topicMemory[userId] = topicMemory[userId] || {};
-    memory[userId].push(userText); // 記錄當前訊息
+    memory[userId].push(userText);
 
-    // 限制上下文記憶為最近 1 條訊息
     const contextMessages = memory[userId].slice(-1).map(text => ({ role: "user", content: text }));
 
-    // 重試邏輯，最多重試 2 次
     let gptResult = null;
     for (let attempt = 1; attempt <= 3; attempt++) {
       try {
@@ -129,22 +131,22 @@ export default async function handler(req, res) {
           await delay(attempt * 2000);
           continue;
         }
-        console.error("GPT 錯誤:", e.message);
-        await replyToLine(replyToken, "系統忙碌中，請稍後再試或聯繫我們！");
-        return res.status(200).json({ status: "ok", message: `GPT 錯誤: ${e.message}` });
+        console.error("GPT 錯誤:", e.message, e.stack);
+        await replyToLine(replyToken, "系統忙碌中，請稍後再試或聯繫我們的聯絡人！");
+        return;
       }
     }
 
     if (!gptResult) {
-      await replyToLine(replyToken, "系統忙碌中，請稍後再試或聯繫我們！");
-      return res.status(200).json({ status: "ok", message: "GPT 請求失敗" });
+      await replyToLine(replyToken, "系統忙碌中，請稍後再試或聯繫我們的聯絡人！");
+      return;
     }
 
     const { category, params, followup } = gptResult;
 
     if (category === "other") {
       await replyToLine(replyToken, followup || "請提供與車輛相關的問題，我們將根據車輛資訊回覆！");
-      return res.status(200).json({ status: "ok", message: "無關訊息" });
+      return;
     }
 
     let data = [];
@@ -172,7 +174,7 @@ export default async function handler(req, res) {
     if (!query) {
       console.log("無有效查詢參數，跳過查詢");
       await replyToLine(replyToken, followup || "目前無法根據您的問題查詢，請提供更具體的車輛相關條件（如廠牌、年份），我們將根據車輛資訊回覆！");
-      return res.status(200).json({ status: "ok", message: "無有效查詢參數" });
+      return;
     }
 
     const supabaseUrl = process.env.SUPABASE_URL.replace(/\/+$/, "");
@@ -183,7 +185,7 @@ export default async function handler(req, res) {
       const resp = await fetch(url, {
         headers: {
           apikey: process.env.SUPABASE_KEY,
-          Authorization: `Bearer ${process.env.SUPABASE_KEY`,
+          Authorization: `Bearer ${process.env.SUPABASE_KEY}`,
           "Content-Type": "application/json",
           "Prefer": "return=representation"
         },
@@ -194,7 +196,7 @@ export default async function handler(req, res) {
         const errorText = await resp.text();
         console.error(`Supabase 錯誤: ${resp.status} ${resp.statusText}`, errorText);
         await replyToLine(replyToken, "目前無法查詢車輛資料，請稍後再試或聯繫我們的聯絡人！");
-        return res.status(200).json({ status: "ok", message: `Supabase 查詢失敗: ${errorText}` });
+        return;
       }
 
       const rawText = await resp.text();
@@ -203,15 +205,14 @@ export default async function handler(req, res) {
       } catch (e) {
         console.error("⚠️ Supabase 回傳非 JSON：", rawText);
         await replyToLine(replyToken, "目前無法查詢車輛資料，請稍後再試或聯繫我們的聯絡人！");
-        return res.status(200).json({ status: "ok", message: "Supabase 回傳非 JSON" });
+        return;
       }
     } catch (e) {
-      console.error("Supabase 查詢錯誤 (cars):", e.message);
+      console.error("Supabase 查詢錯誤 (cars):", e.message, e.stack);
       await replyToLine(replyToken, "目前無法查詢車輛資料，請稍後再試或聯繫我們的聯絡人！");
-      return res.status(200).json({ status: "ok", message: `Supabase 查詢錯誤: ${e.message}` });
+      return;
     }
 
-    // 基於查詢結果回覆，僅提供簡潔答案
     let replyText = "";
     if (Array.isArray(data) && data.length > 0) {
       const count = data.length;
@@ -221,14 +222,12 @@ export default async function handler(req, res) {
     }
 
     await replyToLine(replyToken, replyText);
-    return res.status(200).json({ status: "ok", reply: replyText });
   } catch (error) {
-    console.error("❌ webhook 錯誤：", error.message, error.stack);
+    console.error("❌ 頂層 webhook 錯誤：", error.message, error.stack);
     const replyToken = req.body.events?.[0]?.replyToken;
     if (replyToken) {
-      await replyToLine(replyToken, "系統忙碌中，請稍後再試或聯繫我們的聯絡人！");
+      await replyToLine(replyToken, "系統發生錯誤，請稍後再試或聯繫我們的聯絡人！");
     }
-    return res.status(200).json({ status: "ok", message: `內部錯誤: ${error.message}` });
   }
 }
 
@@ -254,9 +253,9 @@ async function replyToLine(replyToken, text) {
 
     if (!response.ok) {
       const errorText = await response.text();
-      console.error(`LINE API 錯誤: ${response.status} ${resp.statusText}`, errorText);
+      console.error(`LINE API 錯誤: ${response.status} ${response.statusText}`, errorText);
     }
   } catch (error) {
-    console.error("LINE 回覆錯誤:", error.message);
+    console.error("LINE 回覆錯誤:", error.message, error.stack);
   }
 }
