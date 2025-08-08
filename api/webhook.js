@@ -19,7 +19,6 @@ const parsePrice = (val) => {
 
   const parseChineseNumber = (str) => {
     let total = 0, unit = 1, num = 0;
-
     for (let i = str.length - 1; i >= 0; i--) {
       const char = str[i];
       if (chineseUnitMap[char]) {
@@ -51,34 +50,46 @@ const parsePrice = (val) => {
 };
 
 export default async function handler(req, res) {
+  // Log the entire request body for debugging
+  console.log("📥 Incoming LINE webhook request:", JSON.stringify(req.body, null, 2));
+
   try {
     if (req.method !== "POST") {
+      console.warn("⚠️ Non-POST request received:", req.method);
       return res.status(405).json({ error: "Method Not Allowed", message: "僅允許 POST 請求" });
     }
 
     const { events } = req.body;
-    if (!events?.[0]) {
-      return res.status(400).json({ error: "無效請求", message: "缺少事件資料" });
+    // Handle empty or missing events array (LINE may send empty events for webhook verification)
+    if (!events || !Array.isArray(events) || events.length === 0) {
+      console.warn("⚠️ No events in webhook payload or invalid events array");
+      // Return 200 to satisfy LINE webhook requirements
+      return res.status(200).json({ status: "ok", message: "No events to process" });
     }
 
-    const { message, replyToken, source } = events[0];
-    const userText = message?.text?.trim();
-    const userId = source?.userId;
+    const event = events[0];
+    const userText = event?.message?.text?.trim();
+    const replyToken = event?.replyToken;
+    const userId = event?.source?.userId;
 
+    // Validate required fields
     if (!userText || !replyToken || !userId) {
-      return res.status(400).json({ error: "無效請求", message: "缺少必要欄位" });
+      console.warn("⚠️ Missing required fields:", { userText, replyToken, userId });
+      // Instead of 400, reply to LINE and return 200 to avoid webhook errors
+      await replyToLine(replyToken, "請提供完整的訊息內容，謝謝！");
+      return res.status(200).json({ status: "ok", message: "缺少必要欄位，已回覆用戶" });
     }
 
-    // 驗證環境變數
+    // Verify environment variables
     const requiredEnv = ["OPENAI_API_KEY", "SUPABASE_URL", "SUPABASE_KEY", "LINE_TOKEN"];
     const missingEnv = requiredEnv.filter(env => !process.env[env]);
     if (missingEnv.length > 0) {
       console.error(`缺少環境變數: ${missingEnv.join(", ")}`);
       await replyToLine(replyToken, "系統發生錯誤，請稍後再試！");
-      return res.status(500).json({ error: "伺服器配置錯誤", message: `缺少環境變數: ${missingEnv.join(", ")}` });
+      return res.status(200).json({ status: "ok", message: `缺少環境變數: ${missingEnv.join(", ")}` });
     }
 
-    // 初始化記憶
+    // Initialize memory
     memory[userId] = memory[userId] || [];
     topicMemory[userId] = topicMemory[userId] || {};
 
@@ -90,13 +101,13 @@ export default async function handler(req, res) {
           role: "system",
           content: `你是亞鈺汽車的客服助手，請分析使用者訊息並返回以下 JSON 結構：
 {
-  "category": "cars" | "company" | "other",
+  "category": "cars" | "other",
   "params": { ... },
   "followup": "..."
 }
 
 **資料表結構**：
-- 表格名稱：CARS
+- 表格名稱：cars
 - 欄位：物件編號, 廠牌, 車款, 車型, 年式, 年份, 變速系統, 車門數, 驅動方式, 引擎燃料, 乘客數, 排氣量, 顏色, 安全性配備, 舒適性配備, 首次領牌時間, 行駛里程, 車身號碼, 引擎號碼, 外匯車資料, 車輛售價, 車輛賣點, 車輛副標題, 賣家保證, 特色說明, 影片看車, 物件圖片, 聯絡人, 行動電話, 賞車地址, line, 檢測機構, 查定編號, 認證書
 
 **規則**：
@@ -123,7 +134,7 @@ export default async function handler(req, res) {
     } catch (e) {
       console.error("GPT JSON 解析錯誤:", e.message);
       await replyToLine(replyToken, "不好意思，請再試一次，我們會請專人協助您！");
-      return res.status(200).json({ status: "GPT JSON 解析錯誤" });
+      return res.status(200).json({ status: "ok", message: "GPT JSON 解析錯誤" });
     }
 
     const { category, params, followup } = result;
@@ -131,22 +142,22 @@ export default async function handler(req, res) {
     const lastParams = topicMemory[userId];
     const lastBrand = lastParams?.廠牌;
 
-    // 更新記憶
+    // Update memory
     if (currentBrand && currentBrand !== lastBrand) {
       memory[userId] = [userText];
       topicMemory[userId] = { ...params };
     } else {
-      memory[userId] = [...memory[userId], userText].slice(-5); // 限制記憶為最近 5 條
+      memory[userId] = [...memory[userId], userText].slice(-5);
       topicMemory[userId] = { ...lastParams, ...params };
     }
 
     if (category === "other") {
       await replyToLine(replyToken, followup || "請詢問與亞鈺汽車相關的問題，謝謝！");
-      return res.status(200).json({ status: "無關訊息" });
+      return res.status(200).json({ status: "ok", message: "無關訊息" });
     }
 
     let data = [];
-    const tables = category === "cars" ? ["CARS"] : ["company"];
+    const tables = category === "cars" ? ["cars"] : ["company"];
     const validColumns = [
       "物件編號", "廠牌", "車款", "車型", "年式", "年份", "變速系統", "車門數", "驅動方式",
       "引擎燃料", "乘客數", "排氣量", "顏色", "安全性配備", "舒適性配備", "首次領牌時間",
@@ -185,7 +196,7 @@ export default async function handler(req, res) {
             "Content-Type": "application/json",
             "Prefer": "return=representation"
           },
-          signal: AbortSignal.timeout(10000) // 設置 10 秒超時
+          signal: AbortSignal.timeout(10000)
         });
 
         if (!resp.ok) {
@@ -231,12 +242,13 @@ export default async function handler(req, res) {
     await replyToLine(replyToken, replyText);
     return res.status(200).json({ status: "ok", reply: replyText });
   } catch (error) {
-    console.error("❌ webhook 錯誤：", error);
+    console.error("❌ webhook 錯誤：", error.message, error.stack);
     const replyToken = req.body.events?.[0]?.replyToken;
     if (replyToken) {
       await replyToLine(replyToken, "系統發生錯誤，請稍後再試！");
     }
-    return res.status(500).json({ error: "內部伺服器錯誤", message: error.message });
+    // Always return 200 to LINE to avoid webhook deactivation
+    return res.status(200).json({ status: "ok", message: `內部錯誤: ${error.message}` });
   }
 }
 
@@ -257,7 +269,7 @@ async function replyToLine(replyToken, text) {
         replyToken,
         messages: [{ type: "text", text: text.slice(0, 2000) }]
       }),
-      signal: AbortSignal.timeout(5000) // 設置 5 秒超時
+      signal: AbortSignal.timeout(5000)
     });
 
     if (!response.ok) {
