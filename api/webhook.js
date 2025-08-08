@@ -2,20 +2,14 @@ import OpenAI from "openai";
 import fetch from "node-fetch";
 
 const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
-const memory = {};
-const topicMemory = {};
+const memory = {}; // 儲存對話上下文記憶
+const topicMemory = {}; // 儲存主題相關參數記憶
 
 const parsePrice = (val) => {
   if (typeof val !== "string") return val;
 
-  const chineseNumMap = {
-    "零": 0, "一": 1, "二": 2, "兩": 2, "三": 3, "四": 4,
-    "五": 5, "六": 6, "七": 7, "八": 8, "九": 9
-  };
-
-  const chineseUnitMap = {
-    "十": 10, "百": 100, "千": 1000, "萬": 10000
-  };
+  const chineseNumMap = { "零": 0, "一": 1, "二": 2, "兩": 2, "三": 3, "四": 4, "五": 5, "六": 6, "七": 7, "八": 8, "九": 9 };
+  const chineseUnitMap = { "十": 10, "百": 100, "千": 1000, "萬": 10000 };
 
   const parseChineseNumber = (str) => {
     let total = 0, unit = 1, num = 0;
@@ -40,14 +34,13 @@ const parsePrice = (val) => {
   const cleaned = val.replace(/[元台幣\s]/g, "").trim();
   if (cleaned.includes("萬")) {
     const numericPart = cleaned.replace("萬", "").trim();
-    if (!isNaN(Number(numericPart))) {
-      return Math.round(parseFloat(numericPart) * 10000);
-    }
+    if (!isNaN(Number(numericPart))) return Math.round(parseFloat(numericPart) * 10000);
     return parseChineseNumber(numericPart) * 10000;
   }
-
   return isNaN(Number(cleaned)) ? val : Number(cleaned);
 };
+
+const delay = (ms) => new Promise(resolve => setTimeout(resolve, ms));
 
 export default async function handler(req, res) {
   console.log("📥 Incoming LINE webhook request:", JSON.stringify(req.body, null, 2));
@@ -83,16 +76,24 @@ export default async function handler(req, res) {
       return res.status(200).json({ status: "ok", message: `缺少環境變數: ${missingEnv.join(", ")}` });
     }
 
+    // 初始化或更新記憶
     memory[userId] = memory[userId] || [];
     topicMemory[userId] = topicMemory[userId] || {};
+    memory[userId].push(userText); // 記錄當前訊息
 
-    const contextMessages = memory[userId].map(text => ({ role: "user", content: text }));
-    const gpt = await openai.chat.completions.create({
-      model: "gpt-4o",
-      messages: [
-        {
-          role: "system",
-          content: `你是亞鈺汽車的客服助手，請分析使用者訊息並返回以下 JSON 結構：
+    // 限制上下文記憶為最近 1 條訊息
+    const contextMessages = memory[userId].slice(-1).map(text => ({ role: "user", content: text }));
+
+    // 重試邏輯，最多重試 2 次
+    let gptResult = null;
+    for (let attempt = 1; attempt <= 3; attempt++) {
+      try {
+        const gpt = await openai.chat.completions.create({
+          model: "gpt-4o",
+          messages: [
+            {
+              role: "system",
+              content: `你是亞鈺汽車的客服助手，針對簡單問題（如數量或單一條件）僅回覆單一答案，除非用戶繼續提問。返回以下 JSON 結構：
 {
   "category": "cars" | "other",
   "params": { ... },
@@ -101,46 +102,45 @@ export default async function handler(req, res) {
 
 **資料表結構**：
 - 表格名稱：cars
-- 欄位：物件編號, 廠牌, 車款, 車型, 年式, 年份, 變速系統, 車門數, 驅動方式, 引擎燃料, 乘客數, 排氣量, 顏色, 安全性配備, 舒適性配備, 首次領牌時間, 行駛里程, 車身號碼, 引擎號碼, 外匯車資料, 車輛售價, 車輛賣點, 車輛副標題, 賣家保證, 特色說明, 影片看車, 物件圖片, 聯絡人, 行動電話, 賞車地址, line, 檢測機構, 查定編號, 認證書
+- 欄位：物件編號, brand, 車款, 車型, 年式, 年份, 變速系統, 車門數, 驅動方式, 引擎燃料, 乘客數, 排氣量, 顏色, 安全性配備, 舒適性配備, 首次領牌時間, 行駛里程, 車身號碼, 引擎號碼, 外匯車資料, 車輛售價, 車輛賣點, 車輛副標題, 賣家保證, 特色說明, 影片看車, 物件圖片, 聯絡人, 行動電話, 賞車地址, line, 檢測機構, 查定編號, 認證書
 
 **規則**：
-1. 若問題與車輛相關，category 設為 "cars"，params 包含對應欄位的查詢條件（如：廠牌、車款、年份、車輛售價等），數值欄位（如車輛售價、年份、行駛里程）可使用範圍查詢（gte、lte、eq）。
+1. 若問題與車輛相關（如數量、年份等），category 設為 "cars"，params 包含查詢條件（如 "年份" 或 "brand"），使用 gte/lte/eq。
 2. 若無法判斷，category 設為 "other"，params 為空，followup 設為 "請詢問與亞鈺汽車相關的問題，謝謝！"。
-3. 確保 params 中的鍵名與資料表欄位完全一致，數值欄位（如車輛售價、年份）應為對應格式（如 { "車輛售價": { "lte": 1000000 } }）。
-4. followup 為建議的回覆訊息，保持簡潔且符合客服語氣。`
-        },
-        ...contextMessages,
-        { role: "user", content: userText }
-      ],
-      temperature: 0.7,
-      max_tokens: 500
-    });
+3. 確保 params 鍵名與資料表欄位一致（如 "brand" 而非 "廠牌"）。
+4. followup 為簡潔回覆，僅在必要時提供。`
+            },
+            ...contextMessages,
+            { role: "user", content: userText }
+          ],
+          temperature: 0.7,
+          max_tokens: 200 // 進一步減少 token 數量
+        });
 
-    let result;
-    try {
-      const content = gpt.choices[0].message.content.trim().replace(/^```json\n?|\n?```$/g, "");
-      result = JSON.parse(content);
-      if (!result.category || !result.params || !result.followup) {
-        throw new Error("無效的 JSON 結構");
+        const content = gpt.choices[0].message.content.trim().replace(/^```json\n?|\n?```$/g, "");
+        gptResult = JSON.parse(content);
+        if (!gptResult.category || !gptResult.params || !gptResult.followup) {
+          throw new Error("無效的 JSON 結構");
+        }
+        break;
+      } catch (e) {
+        if (e.status === 429 && attempt < 3) {
+          console.warn(`OpenAI 429 錯誤，第 ${attempt} 次嘗試，等待 ${attempt * 2000}ms 後重試`);
+          await delay(attempt * 2000);
+          continue;
+        }
+        console.error("GPT 錯誤:", e.message);
+        await replyToLine(replyToken, "系統忙碌中，請稍後再試或聯繫我們！");
+        return res.status(200).json({ status: "ok", message: `GPT 錯誤: ${e.message}` });
       }
-    } catch (e) {
-      console.error("GPT JSON 解析錯誤:", e.message);
-      await replyToLine(replyToken, "不好意思，請再試一次，我們會請專人協助您！");
-      return res.status(200).json({ status: "ok", message: "GPT JSON 解析錯誤" });
     }
 
-    const { category, params, followup } = result;
-    const currentBrand = params?.廠牌;
-    const lastParams = topicMemory[userId];
-    const lastBrand = lastParams?.廠牌;
-
-    if (currentBrand && currentBrand !== lastBrand) {
-      memory[userId] = [userText];
-      topicMemory[userId] = { ...params };
-    } else {
-      memory[userId] = [...memory[userId], userText].slice(-5);
-      topicMemory[userId] = { ...lastParams, ...params };
+    if (!gptResult) {
+      await replyToLine(replyToken, "系統忙碌中，請稍後再試或聯繫我們！");
+      return res.status(200).json({ status: "ok", message: "GPT 請求失敗" });
     }
+
+    const { category, params, followup } = gptResult;
 
     if (category === "other") {
       await replyToLine(replyToken, followup || "請詢問與亞鈺汽車相關的問題，謝謝！");
@@ -149,7 +149,7 @@ export default async function handler(req, res) {
 
     let data = [];
     const validColumns = [
-      "物件編號", "廠牌", "車款", "車型", "年式", "年份", "變速系統", "車門數", "驅動方式",
+      "物件編號", "brand", "車款", "車型", "年式", "年份", "變速系統", "車門數", "驅動方式",
       "引擎燃料", "乘客數", "排氣量", "顏色", "安全性配備", "舒適性配備", "首次領牌時間",
       "行駛里程", "車身號碼", "引擎號碼", "外匯車資料", "車輛售價", "車輛賣點", "車輛副標題",
       "賣家保證", "特色說明", "影片看車", "物件圖片", "聯絡人", "行動電話", "賞車地址",
@@ -171,7 +171,7 @@ export default async function handler(req, res) {
 
     if (!query) {
       console.log("無有效查詢參數，跳過查詢");
-      await replyToLine(replyToken, "請提供更具體的查詢條件（如廠牌、價格範圍），謝謝！");
+      await replyToLine(replyToken, "請提供更具體的查詢條件（如廠牌、年份），謝謝！");
       return res.status(200).json({ status: "ok", message: "無有效查詢參數" });
     }
 
@@ -211,24 +211,13 @@ export default async function handler(req, res) {
       return res.status(200).json({ status: "ok", message: `Supabase 查詢錯誤: ${e.message}` });
     }
 
+    // 僅回覆數量或簡單結果，除非用戶繼續提問
     let replyText = "";
     if (Array.isArray(data) && data.length > 0) {
-      const prompt = `請用繁體中文、客服語氣、字數不超過250字，直接回答使用者查詢條件為 ${JSON.stringify(params)}，以下是結果：\n${JSON.stringify(data, null, 2)}。請重點突出車輛的廠牌、車款、年份、車輛售價及特色說明，並提供聯絡人與行動電話資訊。`;
-      const chatReply = await openai.chat.completions.create({
-        model: "gpt-4o",
-        messages: [
-          {
-            role: "system",
-            content: "你是亞鈺汽車的50年資深客服專員，請用自然、貼近人心的口吻回覆客戶問題，重點突出車輛資訊（廠牌、車款、年份、售價、特色），並提供聯絡資訊，字數不超過250字。"
-          },
-          { role: "user", content: prompt }
-        ],
-        temperature: 0.7,
-        max_tokens: 250
-      });
-      replyText = chatReply.choices[0].message.content.trim();
+      const count = data.length;
+      replyText = `目前有 ${count} 台符合條件的車輛。如需詳細資訊，請繼續提問！`;
     } else {
-      replyText = "目前查無符合條件的車輛資料，您可以提供更多條件（如廠牌、價格範圍）或聯繫我們進一步確認！";
+      replyText = "目前查無符合條件的車輛資料，請提供更多條件（如廠牌）或聯繫我們！";
     }
 
     await replyToLine(replyToken, replyText);
@@ -237,7 +226,7 @@ export default async function handler(req, res) {
     console.error("❌ webhook 錯誤：", error.message, error.stack);
     const replyToken = req.body.events?.[0]?.replyToken;
     if (replyToken) {
-      await replyToLine(replyToken, "系統發生錯誤，請稍後再試！");
+      await replyToLine(replyToken, "系統忙碌中，請稍後再試或聯繫我們！");
     }
     return res.status(200).json({ status: "ok", message: `內部錯誤: ${error.message}` });
   }
