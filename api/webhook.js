@@ -43,22 +43,22 @@ const parsePrice = (val) => {
 const delay = (ms) => new Promise(resolve => setTimeout(resolve, ms));
 
 export default async function handler(req, res) {
-  console.log("📥 Incoming LINE webhook request:", JSON.stringify(req.body, null, 2));
+  console.log("📥 Incoming LINE webhook request at", new Date().toISOString(), ":", JSON.stringify(req.body, null, 2));
 
   // 確保總是返回 200，無論是否異常
   res.status(200).json({ status: "ok" });
 
   try {
     if (req.method !== "POST") {
-      console.warn("⚠️ Non-POST request received:", req.method);
+      console.warn("⚠️ Non-POST request received:", req.method, "at", new Date().toISOString());
       await replyToLine(req.body.events?.[0]?.replyToken, "僅允許 POST 請求，謝謝！");
       return;
     }
 
     const { events } = req.body;
     if (!events || !Array.isArray(events) || events.length === 0) {
-      console.warn("⚠️ No events in webhook payload or invalid events array");
-      console.log("Request details:", { destination: req.body.destination, events: req.body.events });
+      console.warn("⚠️ No events in webhook payload or invalid events array at", new Date().toISOString());
+      console.log("Request details:", { destination: req.body.destination, events: req.body.events, headers: req.headers });
       // 不強制回覆，僅記錄
       return;
     }
@@ -69,7 +69,7 @@ export default async function handler(req, res) {
     const userId = event?.source?.userId;
 
     if (!userText || !replyToken || !userId) {
-      console.warn("⚠️ Missing required fields:", { userText, replyToken, userId });
+      console.warn("⚠️ Missing required fields:", { userText, replyToken, userId }, "at", new Date().toISOString());
       await replyToLine(replyToken, "請提供完整的訊息內容，謝謝！");
       return;
     }
@@ -77,7 +77,7 @@ export default async function handler(req, res) {
     const requiredEnv = ["OPENAI_API_KEY", "SUPABASE_URL", "SUPABASE_KEY", "LINE_TOKEN"];
     const missingEnv = requiredEnv.filter(env => !process.env[env]);
     if (missingEnv.length > 0) {
-      console.error(`缺少環境變數: ${missingEnv.join(", ")}`);
+      console.error(`缺少環境變數: ${missingEnv.join(", ")} at`, new Date().toISOString());
       await replyToLine(replyToken, "系統發生錯誤，請稍後再試或聯繫我們！");
       return;
     }
@@ -128,11 +128,11 @@ export default async function handler(req, res) {
         break;
       } catch (e) {
         if (e.status === 429 && attempt < 3) {
-          console.warn(`OpenAI 429 錯誤，第 ${attempt} 次嘗試，等待 ${attempt * 2000}ms 後重試`);
+          console.warn(`OpenAI 429 錯誤，第 ${attempt} 次嘗試，等待 ${attempt * 2000}ms 後重試 at`, new Date().toISOString());
           await delay(attempt * 2000);
           continue;
         }
-        console.error("GPT 錯誤:", e.message, e.stack);
+        console.error("GPT 錯誤:", e.message, e.stack, "at", new Date().toISOString());
         await replyToLine(replyToken, "系統忙碌中，請稍後再試或聯繫我們的聯絡人！");
         return;
       }
@@ -173,14 +173,14 @@ export default async function handler(req, res) {
       .join("&");
 
     if (!query) {
-      console.log("無有效查詢參數，跳過查詢");
+      console.log("無有效查詢參數，跳過查詢 at", new Date().toISOString());
       await replyToLine(replyToken, followup || "目前無法根據您的問題查詢，請提供更具體的車輛相關條件（如廠牌、年份），我們將根據車輛資訊回覆！");
       return;
     }
 
     const supabaseUrl = process.env.SUPABASE_URL.replace(/\/+$/, "");
     const url = `${supabaseUrl}/rest/v1/cars?select=*&${query}`;
-    console.log("🚀 查詢 Supabase URL:", url);
+    console.log("🚀 查詢 Supabase URL:", url, "at", new Date().toISOString());
 
     try {
       const resp = await fetch(url, {
@@ -195,7 +195,7 @@ export default async function handler(req, res) {
 
       if (!resp.ok) {
         const errorText = await resp.text();
-        console.error(`Supabase 錯誤: ${resp.status} ${resp.statusText}`, errorText);
+        console.error(`Supabase 錯誤: ${resp.status} ${resp.statusText}`, errorText, "at", new Date().toISOString());
         await replyToLine(replyToken, "目前無法查詢車輛資料，請稍後再試或聯繫我們的聯絡人！");
         return;
       }
@@ -204,12 +204,12 @@ export default async function handler(req, res) {
       try {
         data = JSON.parse(rawText);
       } catch (e) {
-        console.error("⚠️ Supabase 回傳非 JSON：", rawText);
+        console.error("⚠️ Supabase 回傳非 JSON：", rawText, "at", new Date().toISOString());
         await replyToLine(replyToken, "目前無法查詢車輛資料，請稍後再試或聯繫我們的聯絡人！");
         return;
       }
     } catch (e) {
-      console.error("Supabase 查詢錯誤 (cars):", e.message, e.stack);
+      console.error("Supabase 查詢錯誤 (cars):", e.message, e.stack, "at", new Date().toISOString());
       await replyToLine(replyToken, "目前無法查詢車輛資料，請稍後再試或聯繫我們的聯絡人！");
       return;
     }
@@ -224,7 +224,7 @@ export default async function handler(req, res) {
 
     await replyToLine(replyToken, replyText);
   } catch (error) {
-    console.error("❌ 頂層 webhook 錯誤：", error.message, error.stack);
+    console.error("❌ 頂層 webhook 錯誤：", error.message, error.stack, "at", new Date().toISOString());
     const replyToken = req.body.events?.[0]?.replyToken;
     if (replyToken) {
       await replyToLine(replyToken, "系統發生錯誤，請稍後再試或聯繫我們的聯絡人！");
@@ -234,7 +234,7 @@ export default async function handler(req, res) {
 
 async function replyToLine(replyToken, text) {
   if (!replyToken || !text) {
-    console.warn("缺少 replyToken 或 text，無法回覆 LINE。Request:", JSON.stringify({ replyToken, text }));
+    console.warn("缺少 replyToken 或 text，無法回覆 LINE。Request:", JSON.stringify({ replyToken, text }), "at", new Date().toISOString());
     return;
   }
 
@@ -254,9 +254,9 @@ async function replyToLine(replyToken, text) {
 
     if (!response.ok) {
       const errorText = await response.text();
-      console.error(`LINE API 錯誤: ${response.status} ${response.statusText}`, errorText);
+      console.error(`LINE API 錯誤: ${response.status} ${response.statusText}`, errorText, "at", new Date().toISOString());
     }
   } catch (error) {
-    console.error("LINE 回覆錯誤:", error.message, error.stack);
+    console.error("LINE 回覆錯誤:", error.message, error.stack, "at", new Date().toISOString());
   }
 }
