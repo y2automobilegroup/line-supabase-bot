@@ -58,7 +58,8 @@ export default async function handler(req, res) {
     const { events } = req.body;
     if (!events || !Array.isArray(events) || events.length === 0) {
       console.warn("⚠️ No events in webhook payload or invalid events array");
-      await replyToLine(null, "未接收到有效事件，請確認 webhook 配置，謝謝！");
+      console.log("Request details:", { destination: req.body.destination, events: req.body.events });
+      // 不強制回覆，僅記錄
       return;
     }
 
