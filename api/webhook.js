@@ -85,6 +85,7 @@ export default async function handler(req, res) {
 
     memory[userId] = memory[userId] || [];
     topicMemory[userId] = topicMemory[userId] || {};
+    memory[userId].push(userText);
 
     const contextMessages = memory[userId].map(text => ({ role: "user", content: text }));
     const gpt = await openai.chat.completions.create({
@@ -104,12 +105,11 @@ export default async function handler(req, res) {
 - 欄位：物件編號, 廠牌, 車款, 車型, 年式, 年份, 變速系統, 車門數, 驅動方式, 引擎燃料, 乘客數, 排氣量, 顏色, 安全性配備, 舒適性配備, 首次領牌時間, 行駛里程, 車身號碼, 引擎號碼, 外匯車資料, 車輛售價, 車輛賣點, 車輛副標題, 賣家保證, 特色說明, 影片看車, 物件圖片, 聯絡人, 行動電話, 賞車地址, line, 檢測機構, 查定編號, 認證書
 
 **規則**：
-1. 如果問題是大範圍問題，請先用引導的方式(如：詢問你們有幾台車，先詢問您是想找哪一個牌子的車之類的）。
-1. 請針對客人詢問的問題給予答案並且引導接下來問題（如：你們有幾台車，請回覆單一數字且接下來引導問題）。
-1. 若問題與車輛相關，category 設為 "cars"，params 包含對應欄位的查詢條件（如：brand、車款、年份、車輛售價等），數值欄位（如車輛售價、年份、行駛里程）可使用範圍查詢（gte、lte、eq）。
-2. 若無法判斷，category 設為 "other"，params 為空，followup 設為 "請詢問與亞鈺汽車相關的問題，謝謝！"。
-3. 確保 params 中的鍵名與資料表欄位完全一致（如使用 "brand" 而非 "廠牌"），數值欄位（如車輛售價、年份）應為對應格式（如 { "車輛售價": { "lte": 1000000 } }）。
-4. followup 為建議的回覆訊息，保持簡潔且符合客服語氣。`
+1. 如果問題是大範圍問題（如「有幾台車」），category 設為 "cars"，params 為空，followup 設為引導問題（如「請問您想找哪個牌子的車？」）。
+2. 若問題與車輛相關，category 設為 "cars"，params 包含對應欄位的查詢條件（如：廠牌、車款、年份、車輛售價等），數值欄位可使用範圍查詢（gte、lte、eq）。
+3. 若無法判斷，category 設為 "other"，params 為空，followup 設為 "請詢問與亞鈺汽車相關的問題，謝謝！"。
+4. 確保 params 中的鍵名與資料表欄位完全一致（使用中文欄位名如 "廠牌" 而非 "brand"），數值欄位應為對應格式（如 { "車輛售價": { "lte": 1000000 } }）。
+5. followup 為建議的回覆訊息，保持簡潔且符合客服語氣。`
         },
         ...contextMessages,
         { role: "user", content: userText }
@@ -132,9 +132,9 @@ export default async function handler(req, res) {
     }
 
     const { category, params, followup } = result;
-    const currentBrand = params?.brand;
+    const currentBrand = params?.廠牌;
     const lastParams = topicMemory[userId];
-    const lastBrand = lastParams?.brand;
+    const lastBrand = lastParams?.廠牌;
 
     if (currentBrand && currentBrand !== lastBrand) {
       memory[userId] = [userText];
@@ -158,6 +158,7 @@ export default async function handler(req, res) {
       "line", "檢測機構", "查定編號", "認證書"
     ];
 
+    // 若 params 為空，查詢全部車輛數
     const query = Object.entries(params || {})
       .filter(([key]) => validColumns.includes(key))
       .filter(([_, value]) => value !== undefined && value !== null)
@@ -171,14 +172,8 @@ export default async function handler(req, res) {
       })
       .join("&");
 
-    if (!query) {
-      console.log("無有效查詢參數，跳過查詢");
-      await replyToLine(replyToken, "請提供更具體的查詢條件（如廠牌、價格範圍），謝謝！");
-      return res.status(200).json({ status: "ok", message: "無有效查詢參數" });
-    }
-
     const supabaseUrl = process.env.SUPABASE_URL.replace(/\/+$/, "");
-    const url = `${supabaseUrl}/rest/v1/cars?select=*&${query}`;
+    const url = `${supabaseUrl}/rest/v1/cars?select=*${query ? `&${query}` : ""}`;
     console.log("🚀 查詢 Supabase URL:", url);
 
     try {
@@ -215,13 +210,14 @@ export default async function handler(req, res) {
 
     let replyText = "";
     if (Array.isArray(data) && data.length > 0) {
-      const prompt = `你是亞鈺汽車的50年資深客服專員，擅長解決問題且擅長思考拆解問題，請先透過參考資料判斷並解析問題點，只詢問參考資料需要的問題，不要問不相關參考資料的問題，如果詢問內容不在參考資料內，請先判斷這句話是什麼類型的問題，然後針對參考資料內的資料做反問問題，最後問到需要的答案，請用最積極與充滿溫度的方式回答，若參考資料與問題無關，請回覆罐頭訊息：\"感謝您的詢問，請詢問亞鈺汽車相關問題，我們很高興為您服務！😄\"，整體請簡單明瞭講重點字數不要超過250個字，請針對問題直接回答答案，直接回答使用者查詢條件為 ${JSON.stringify(params)}，以下是結果：\n${JSON.stringify(data, null, 2)}。`;
+      const count = data.length;
+      const prompt = `你是亞鈺汽車的50年資深客服專員，請根據查詢條件 ${JSON.stringify(params)} 和結果 ${JSON.stringify(data, null, 2)} 回答。當無特定條件時，回覆總車輛數（如「目前有 ${count} 台車」）並引導問題（如「請問您想找哪個牌子的車？」）。請用積極且溫暖的語氣，字數不超過250字。`;
       const chatReply = await openai.chat.completions.create({
         model: "gpt-4o",
         messages: [
           {
             role: "system",
-            content: "你是亞鈺汽車的50年資深客服專員，擅長解決問題且擅長思考拆解問題，請先透過參考資料判斷並解析問題點，只詢問參考資料需要的問題，不要問不相關參考資料的問題，如果詢問內容不在參考資料內，請先判斷這句話是什麼類型的問題，然後針對參考資料內的資料做反問問題，最後問到需要的答案，請用最積極與充滿溫度的方式回答，若參考資料與問題無關，請回覆罐頭訊息：\"感謝您的詢問，請詢問亞鈺汽車相關問題，我們很高興為您服務！😄\"，整體請簡單明瞭講重點字數不要超過250個字，請針對問題直接回答答案"
+            content: "你是亞鈺汽車的50年資深客服專員，擅長解決問題，用積極溫暖的語氣回答，字數不超過250字，針對查詢條件和數據直接回覆答案，無條件時回覆總車輛數並引導下個問題。"
           },
           { role: "user", content: prompt }
         ],
