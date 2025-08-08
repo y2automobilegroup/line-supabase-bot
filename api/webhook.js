@@ -4,6 +4,7 @@ import fetch from "node-fetch";
 const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
 const memory = {};
 const topicMemory = {};
+const aiPaused = {}; // 儲存每個 userId 的 AI 暫停狀態
 
 const parsePrice = (val) => {
   if (typeof val !== "string") return val;
@@ -85,40 +86,31 @@ export default async function handler(req, res) {
 
     memory[userId] = memory[userId] || [];
     topicMemory[userId] = topicMemory[userId] || {};
+    aiPaused[userId] = aiPaused[userId] || false; // 初始化 AI 暫停狀態
+
     memory[userId].push(userText);
 
-    const contextMessages = memory[userId].map((text, index) => ({ role: "user", content: `${index + 1}. ${text}` }));
-    console.log("Memory content:", contextMessages);
-
-    if (userText.toLowerCase().includes("show chat history")) {
-      const chartData = contextMessages.map((msg, index) => ({
-        x: index + 1,
-        y: msg.content.length,
-        r: 5
-      }));
-
-      return res.status(200).json({
-        status: "ok",
-        chart: {
-          type: "bubble",
-          data: {
-            datasets: [{
-              label: "Chat History",
-              data: chartData,
-              backgroundColor: "#4CAF50",
-              borderColor: "#388E3C",
-              borderWidth: 1
-            }]
-          },
-          options: {
-            scales: {
-              x: { title: { display: true, text: "Message Number" } },
-              y: { title: { display: true, text: "Message Length" } }
-            }
-          }
-        }
-      });
+    // 檢測手動介入並暫停 AI
+    if (userText.includes("@manual") && event.source.type === "official") {
+      aiPaused[userId] = true;
+      await replyToLine(replyToken, "AI 回覆已暫停，我們將手動處理您的問題！");
+      return res.status(200).json({ status: "ok", message: "AI 暫停" });
     }
+
+    // 靜默恢復 AI 回覆
+    if (userText.includes("@resume") && event.source.type === "official") {
+      aiPaused[userId] = false;
+      console.log("AI 回覆已靜默恢復:", userId); // 僅記錄，不發送訊息
+      return res.status(200).json({ status: "ok", message: "AI 靜默恢復" });
+    }
+
+    // 若 AI 暫停，跳過自動回覆
+    if (aiPaused[userId]) {
+      console.log("AI 暫停中，跳過自動回覆:", userId);
+      return res.status(200).json({ status: "ok", message: "AI 暫停中" });
+    }
+
+    const contextMessages = memory[userId].map((text, index) => ({ role: "user", content: `${index + 1}. ${text}` }));
 
     const gpt = await openai.chat.completions.create({
       model: "gpt-4o",
@@ -248,7 +240,7 @@ export default async function handler(req, res) {
         messages: [
           {
             role: "system",
-            content: "你是亞鈺汽車的50年資深客服專員，擅長解決問題，用積極溫暖的語氣回答，整體請把內容濃縮成250個字以內，針對查詢條件和數據直接回覆答案，無條件時回覆總車輛數並引導下個問題。"
+            content: "你是亞鈺汽車的50年資深客服專員，擅長解決問題，用積極溫暖的語氣回答，字數不超過250字，針對查詢條件和數據直接回覆答案，無條件時回覆總車輛數並引導下個問題。"
           },
           { role: "user", content: prompt }
         ],
