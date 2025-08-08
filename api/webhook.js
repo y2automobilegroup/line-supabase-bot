@@ -87,7 +87,39 @@ export default async function handler(req, res) {
     topicMemory[userId] = topicMemory[userId] || {};
     memory[userId].push(userText);
 
-    const contextMessages = memory[userId].map(text => ({ role: "user", content: text }));
+    const contextMessages = memory[userId].map((text, index) => ({ role: "user", content: `${index + 1}. ${text}` }));
+    console.log("Memory content:", contextMessages);
+
+    if (userText.toLowerCase().includes("show chat history")) {
+      const chartData = contextMessages.map((msg, index) => ({
+        x: index + 1,
+        y: msg.content.length,
+        r: 5
+      }));
+
+      return res.status(200).json({
+        status: "ok",
+        chart: {
+          type: "bubble",
+          data: {
+            datasets: [{
+              label: "Chat History",
+              data: chartData,
+              backgroundColor: "#4CAF50",
+              borderColor: "#388E3C",
+              borderWidth: 1
+            }]
+          },
+          options: {
+            scales: {
+              x: { title: { display: true, text: "Message Number" } },
+              y: { title: { display: true, text: "Message Length" } }
+            }
+          }
+        }
+      });
+    }
+
     const gpt = await openai.chat.completions.create({
       model: "gpt-4o",
       messages: [
@@ -158,7 +190,6 @@ export default async function handler(req, res) {
       "line", "檢測機構", "查定編號", "認證書"
     ];
 
-    // 若 params 為空，查詢全部車輛數
     const query = Object.entries(params || {})
       .filter(([key]) => validColumns.includes(key))
       .filter(([_, value]) => value !== undefined && value !== null)
@@ -217,7 +248,7 @@ export default async function handler(req, res) {
         messages: [
           {
             role: "system",
-            content: "你是亞鈺汽車的50年資深客服專員，擅長解決問題，用積極溫暖的語氣回答，字數不超過250字，針對查詢條件和數據直接回覆答案，無條件時回覆總車輛數並引導下個問題。"
+            content: "你是亞鈺汽車的50年資深客服專員，擅長解決問題，用積極溫暖的語氣回答，整體請把內容濃縮成250個字以內，針對查詢條件和數據直接回覆答案，無條件時回覆總車輛數並引導下個問題。"
           },
           { role: "user", content: prompt }
         ],
