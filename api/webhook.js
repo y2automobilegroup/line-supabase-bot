@@ -58,7 +58,7 @@ export default async function handler(req, res) {
     const { events } = req.body;
     if (!events || !Array.isArray(events) || events.length === 0) {
       console.warn("⚠️ No events in webhook payload or invalid events array");
-      await replyToLine(req.body.events?.[0]?.replyToken, "無有效事件，謝謝！");
+      await replyToLine(null, "未接收到有效事件，請確認 webhook 配置，謝謝！");
       return;
     }
 
@@ -233,7 +233,7 @@ export default async function handler(req, res) {
 
 async function replyToLine(replyToken, text) {
   if (!replyToken || !text) {
-    console.warn("缺少 replyToken 或 text，無法回覆 LINE");
+    console.warn("缺少 replyToken 或 text，無法回覆 LINE。Request:", JSON.stringify({ replyToken, text }));
     return;
   }
 
