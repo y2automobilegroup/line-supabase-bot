@@ -93,7 +93,7 @@ export default async function handler(req, res) {
           messages: [
             {
               role: "system",
-              content: `你是亞鈺汽車的客服助手，針對簡單問題（如數量或單一條件）僅回覆單一答案，除非用戶繼續提問。返回以下 JSON 結構：
+              content: `你是亞鈺汽車的客服助手，無論客戶問什麼問題，僅基於 cars 表格內容回覆。返回以下 JSON 結構：
 {
   "category": "cars" | "other",
   "params": { ... },
@@ -102,19 +102,19 @@ export default async function handler(req, res) {
 
 **資料表結構**：
 - 表格名稱：cars
-- 欄位：物件編號, brand, 車款, 車型, 年式, 年份, 變速系統, 車門數, 驅動方式, 引擎燃料, 乘客數, 排氣量, 顏色, 安全性配備, 舒適性配備, 首次領牌時間, 行駛里程, 車身號碼, 引擎號碼, 外匯車資料, 車輛售價, 車輛賣點, 車輛副標題, 賣家保證, 特色說明, 影片看車, 物件圖片, 聯絡人, 行動電話, 賞車地址, line, 檢測機構, 查定編號, 認證書
+- 欄位：物件編號, 廠牌, 車款, 車型, 年式, 年份, 變速系統, 車門數, 驅動方式, 引擎燃料, 乘客數, 排氣量, 顏色, 安全性配備, 舒適性配備, 首次領牌時間, 行駛里程, 車身號碼, 引擎號碼, 外匯車資料, 車輛售價, 車輛賣點, 車輛副標題, 賣家保證, 特色說明, 影片看車, 物件圖片, 聯絡人, 行動電話, 賞車地址, line, 檢測機構, 查定編號, 認證書
 
 **規則**：
-1. 若問題與車輛相關（如數量、年份等），category 設為 "cars"，params 包含查詢條件（如 "年份" 或 "brand"），使用 gte/lte/eq。
-2. 若無法判斷，category 設為 "other"，params 為空，followup 設為 "請詢問與亞鈺汽車相關的問題，謝謝！"。
-3. 確保 params 鍵名與資料表欄位一致（如 "brand" 而非 "廠牌"）。
-4. followup 為簡潔回覆，僅在必要時提供。`
+1. category 總是設為 "cars"，params 包含與問題相關的查詢條件（如 "廠牌" 或 "年份"），使用 gte/lte/eq 或 ilike。
+2. 若問題無法轉為查詢條件，params 為空，followup 提供基於表格的通用回覆。
+3. 確保 params 鍵名與資料表欄位一致。
+4. followup 為簡潔回覆，基於表格內容回答。`
             },
             ...contextMessages,
             { role: "user", content: userText }
           ],
           temperature: 0.7,
-          max_tokens: 200 // 進一步減少 token 數量
+          max_tokens: 200
         });
 
         const content = gpt.choices[0].message.content.trim().replace(/^```json\n?|\n?```$/g, "");
@@ -143,13 +143,13 @@ export default async function handler(req, res) {
     const { category, params, followup } = gptResult;
 
     if (category === "other") {
-      await replyToLine(replyToken, followup || "請詢問與亞鈺汽車相關的問題，謝謝！");
+      await replyToLine(replyToken, followup || "請提供與車輛相關的問題，我們將根據車輛資訊回覆！");
       return res.status(200).json({ status: "ok", message: "無關訊息" });
     }
 
     let data = [];
     const validColumns = [
-      "物件編號", "brand", "車款", "車型", "年式", "年份", "變速系統", "車門數", "驅動方式",
+      "物件編號", "廠牌", "車款", "車型", "年式", "年份", "變速系統", "車門數", "驅動方式",
       "引擎燃料", "乘客數", "排氣量", "顏色", "安全性配備", "舒適性配備", "首次領牌時間",
       "行駛里程", "車身號碼", "引擎號碼", "外匯車資料", "車輛售價", "車輛賣點", "車輛副標題",
       "賣家保證", "特色說明", "影片看車", "物件圖片", "聯絡人", "行動電話", "賞車地址",
@@ -171,7 +171,7 @@ export default async function handler(req, res) {
 
     if (!query) {
       console.log("無有效查詢參數，跳過查詢");
-      await replyToLine(replyToken, "請提供更具體的查詢條件（如廠牌、年份），謝謝！");
+      await replyToLine(replyToken, followup || "目前無法根據您的問題查詢，請提供更具體的車輛相關條件（如廠牌、年份），我們將根據車輛資訊回覆！");
       return res.status(200).json({ status: "ok", message: "無有效查詢參數" });
     }
 
@@ -183,7 +183,7 @@ export default async function handler(req, res) {
       const resp = await fetch(url, {
         headers: {
           apikey: process.env.SUPABASE_KEY,
-          Authorization: `Bearer ${process.env.SUPABASE_KEY}`,
+          Authorization: `Bearer ${process.env.SUPABASE_KEY`,
           "Content-Type": "application/json",
           "Prefer": "return=representation"
         },
@@ -193,7 +193,7 @@ export default async function handler(req, res) {
       if (!resp.ok) {
         const errorText = await resp.text();
         console.error(`Supabase 錯誤: ${resp.status} ${resp.statusText}`, errorText);
-        await replyToLine(replyToken, "目前無法查詢車輛資料，請稍後再試或聯繫我們！");
+        await replyToLine(replyToken, "目前無法查詢車輛資料，請稍後再試或聯繫我們的聯絡人！");
         return res.status(200).json({ status: "ok", message: `Supabase 查詢失敗: ${errorText}` });
       }
 
@@ -202,22 +202,22 @@ export default async function handler(req, res) {
         data = JSON.parse(rawText);
       } catch (e) {
         console.error("⚠️ Supabase 回傳非 JSON：", rawText);
-        await replyToLine(replyToken, "目前無法查詢車輛資料，請稍後再試或聯繫我們！");
+        await replyToLine(replyToken, "目前無法查詢車輛資料，請稍後再試或聯繫我們的聯絡人！");
         return res.status(200).json({ status: "ok", message: "Supabase 回傳非 JSON" });
       }
     } catch (e) {
       console.error("Supabase 查詢錯誤 (cars):", e.message);
-      await replyToLine(replyToken, "目前無法查詢車輛資料，請稍後再試或聯繫我們！");
+      await replyToLine(replyToken, "目前無法查詢車輛資料，請稍後再試或聯繫我們的聯絡人！");
       return res.status(200).json({ status: "ok", message: `Supabase 查詢錯誤: ${e.message}` });
     }
 
-    // 僅回覆數量或簡單結果，除非用戶繼續提問
+    // 基於查詢結果回覆，僅提供簡潔答案
     let replyText = "";
     if (Array.isArray(data) && data.length > 0) {
       const count = data.length;
-      replyText = `目前有 ${count} 台符合條件的車輛。如需詳細資訊，請繼續提問！`;
+      replyText = `目前有 ${count} 台符合條件的車輛，涵蓋廠牌、車款、年份等資訊。如需詳細資料（如車輛售價、聯絡人），請繼續提問！`;
     } else {
-      replyText = "目前查無符合條件的車輛資料，請提供更多條件（如廠牌）或聯繫我們！";
+      replyText = "目前查無符合條件的車輛資料，請提供更多條件（如廠牌、年份）或聯繫我們的聯絡人！";
     }
 
     await replyToLine(replyToken, replyText);
@@ -226,7 +226,7 @@ export default async function handler(req, res) {
     console.error("❌ webhook 錯誤：", error.message, error.stack);
     const replyToken = req.body.events?.[0]?.replyToken;
     if (replyToken) {
-      await replyToLine(replyToken, "系統忙碌中，請稍後再試或聯繫我們！");
+      await replyToLine(replyToken, "系統忙碌中，請稍後再試或聯繫我們的聯絡人！");
     }
     return res.status(200).json({ status: "ok", message: `內部錯誤: ${error.message}` });
   }
@@ -254,7 +254,7 @@ async function replyToLine(replyToken, text) {
 
     if (!response.ok) {
       const errorText = await response.text();
-      console.error(`LINE API 錯誤: ${response.status} ${response.statusText}`, errorText);
+      console.error(`LINE API 錯誤: ${response.status} ${resp.statusText}`, errorText);
     }
   } catch (error) {
     console.error("LINE 回覆錯誤:", error.message);
