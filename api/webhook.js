@@ -95,12 +95,16 @@ export default async function handler(req, res) {
 
     memory[userId].push(userText);
 
+    // 診斷：記錄 userId 和 OFFICIAL_USER_ID
+    console.log("User ID:", userId, "Official User ID:", OFFICIAL_USER_ID);
+
     // 檢測官方帳號輸入並暫停 AI
     if (userId === OFFICIAL_USER_ID) {
       lastOfficialInput[userId] = Date.now(); // 更新最後輸入時間
       if (!aiPaused[userId]) {
         aiPaused[userId] = true;
         await replyToLine(replyToken, "AI 回覆已暫停，我們將手動處理您的問題！");
+        console.log("AI 暫停觸發，userId:", userId);
         return res.status(200).json({ status: "ok", message: "AI 暫停" });
       }
     }
