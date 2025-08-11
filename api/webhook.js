@@ -5,6 +5,10 @@ const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
 const memory = {};
 const topicMemory = {};
 const aiPaused = {}; // 儲存每個 userId 的 AI 暫停狀態
+const lastOfficialInput = {}; // 儲存官方帳號最後輸入時間
+
+// 假設官方帳號的 userId（需從 LINE Developers 獲取）
+const OFFICIAL_USER_ID = process.env.LINE_OFFICIAL_USER_ID; // 請在環境變數中設定
 
 const parsePrice = (val) => {
   if (typeof val !== "string") return val;
@@ -76,7 +80,7 @@ export default async function handler(req, res) {
       return res.status(200).json({ status: "ok", message: "缺少必要欄位，已回覆用戶" });
     }
 
-    const requiredEnv = ["OPENAI_API_KEY", "SUPABASE_URL", "SUPABASE_KEY", "LINE_TOKEN"];
+    const requiredEnv = ["OPENAI_API_KEY", "SUPABASE_URL", "SUPABASE_KEY", "LINE_TOKEN", "LINE_OFFICIAL_USER_ID"];
     const missingEnv = requiredEnv.filter(env => !process.env[env]);
     if (missingEnv.length > 0) {
       console.error(`缺少環境變數: ${missingEnv.join(", ")}`);
@@ -87,21 +91,25 @@ export default async function handler(req, res) {
     memory[userId] = memory[userId] || [];
     topicMemory[userId] = topicMemory[userId] || {};
     aiPaused[userId] = aiPaused[userId] || false; // 初始化 AI 暫停狀態
+    lastOfficialInput[userId] = lastOfficialInput[userId] || 0; // 初始化最後輸入時間
 
     memory[userId].push(userText);
 
-    // 檢測手動介入並暫停 AI
-    if (userText.includes("@manual") && event.source.type === "official") {
-      aiPaused[userId] = true;
-      await replyToLine(replyToken, "AI 回覆已暫停，我們將手動處理您的問題！");
-      return res.status(200).json({ status: "ok", message: "AI 暫停" });
+    // 檢測官方帳號輸入並暫停 AI
+    if (userId === OFFICIAL_USER_ID) {
+      lastOfficialInput[userId] = Date.now(); // 更新最後輸入時間
+      if (!aiPaused[userId]) {
+        aiPaused[userId] = true;
+        await replyToLine(replyToken, "AI 回覆已暫停，我們將手動處理您的問題！");
+        return res.status(200).json({ status: "ok", message: "AI 暫停" });
+      }
     }
 
-    // 靜默恢復 AI 回覆
-    if (userText.includes("@resume") && event.source.type === "official") {
+    // 檢查是否超過 3 分鐘無官方輸入，恢復 AI
+    const timeSinceLastInput = (Date.now() - lastOfficialInput[userId]) / 1000; // 秒
+    if (aiPaused[userId] && timeSinceLastInput > 180) { // 3 分鐘 = 180 秒
       aiPaused[userId] = false;
-      console.log("AI 回覆已靜默恢復:", userId); // 僅記錄，不發送訊息
-      return res.status(200).json({ status: "ok", message: "AI 靜默恢復" });
+      console.log("AI 回覆因無官方輸入超過3分鐘已恢復:", userId);
     }
 
     // 若 AI 暫停，跳過自動回覆
