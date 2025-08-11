@@ -55,7 +55,7 @@ const parsePrice = (val) => {
 };
 
 export default async function handler(req, res) {
-  console.log("📥 Incoming LINE webhook request:", JSON.stringify(req.body, null, 2));
+  console.log("Received request method:", req.method, "body:", JSON.stringify(req.body, null, 2));
 
   try {
     if (req.method !== "POST") {
@@ -109,7 +109,7 @@ export default async function handler(req, res) {
       }
     }
 
-    // 檢查是否超過 3 分鐘無官方輸入，恢復 AI
+    // 檢查是否超過 3 分鐘無官方輸入，恢復 AI 並處理當前訊息
     const timeSinceLastInput = (Date.now() - lastOfficialInput[userId]) / 1000; // 秒
     if (aiPaused[userId] && timeSinceLastInput > 180) { // 3 分鐘 = 180 秒
       aiPaused[userId] = false;
@@ -264,6 +264,7 @@ export default async function handler(req, res) {
       replyText = "目前查無符合條件的車輛資料，您可以提供更多條件（如廠牌、價格範圍）或聯繫我們進一步確認！";
     }
 
+    console.log("Generated replyText:", replyText); // 添加回覆內容日誌
     await replyToLine(replyToken, replyText);
     return res.status(200).json({ status: "ok", reply: replyText });
   } catch (error) {
